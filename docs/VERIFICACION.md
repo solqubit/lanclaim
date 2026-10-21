@@ -1,31 +1,37 @@
-# Verificación de la implementación inicial
+# Verificación de LanClaim 2
 
-## Pruebas ejecutadas
+## Pruebas automáticas
 
-- 59 pruebas Python de dominio, persistencia, concurrencia, recuperación transaccional, API HTTP, detección de interfaces locales, escaneo acotado/cancelable, migración de observaciones guardado atómico de IP/equipo, migración de listas de SO/plataforma, persistencia de opciones y conservación de campos omitidos: aprobadas en Windows con Python 3.14 y Ubuntu 26.04 sobre WSL2 con Python 3.14.
-- Pruebas de traducción ES/EN con Node: etiquetas, errores, texto con saltos de línea, plantillas y conservación literal del contenido del usuario.
-- Sintaxis JavaScript y Bash; ShellCheck para los scripts de instalación, actualización, desinstalación y prueba de ciclo de vida.
-- Integración en contenedor Ubuntu 24.04: instalación, repetición sin pérdida de datos, actualización, fallo simulado de migración que modifica la base, recuperación de código y datos, desinstalación conservando datos, reinstalación y cancelación/confirmación de purga. Se ejecuta el servidor real con el UID del servicio mediante un adaptador de `systemctl` exclusivo de pruebas.
-- Navegador: reclamación con previsualización, creación de máquina, asignación, inicio de reinstalación conservando la IP, enumeración de rango, reclamación seleccionada e interfaz en español/inglés. También se verificaron la navegación superior simplificada, el escaneo de loopback y la reclamación directa desde la tabla. Se verificó además crear equipo desde una IP nueva, asociar una segunda IP al mismo equipo, reinstalar desde la IP y sustituir el equipo conservando el historial. También se verificó el panel integrado sin modal, regreso y cancelación sin guardar/liberar, conservación del borrador al regresar desde una confirmación, guardado de nombre reflejado en tabla y ficha, búsqueda por nombre en Red y etiquetas ES/EN. El entorno de prueba usa un directorio independiente del inventario real.
+- **Python (`python -m unittest discover -s tests`)**:
+  - almacén: esquema v5, descarte de bases antiguas, validación de direcciones y redes, solapamientos, límite de 4096, reclamar/reasignar, liberar, notas, equipos con gestión de IPs atómica, y observaciones que no tocan el inventario;
+  - escáner periódico: ciclo completo, sin solapamiento, errores de ping visibles y recuperables, intervalo 0, ping de Linux/Windows y errores de permisos;
+  - API HTTP: estáticos con lista blanca, CSP, CSRF, Host/Origin, rutas de recursos que devuelven el estado y escaneo al añadir una red;
+  - interfaces de red.
+- **Node**:
+  - `tests/test_model.mjs`: estados, ping reciente, hosts y bordes de red, recuentos, sugerencia de IP, IPs fuera de red y búsqueda;
+  - `tests/test_i18n.mjs`: todo texto pasado a `t()` tiene traducción al inglés.
+- **Linux en contenedor** (`tests/linux`): Ubuntu 24.04 con el servidor real y el UID del servicio. Cubre instalación, repetición, ping de loopback como servicio (con solo `CAP_NET_RAW`), actualización, fallo simulado de una versión que modifica la base con recuperación de código y datos, desinstalación conservando datos, reinstalación, borrado de un equipo conservando sus IPs y cancelación/confirmación de purga. Pasa con `ping_group_range` normal y restringido (`1 0`).
 
-- Edición desplegable bajo la fila: se midieron posiciones y anchuras de las columnas antes/después de abrir y permanecieron iguales. Verificados cambio de IP, cancelar, guardar y conservar el borrador al actualizar la lista. Contraste calculado para texto principal 15,38:1, secundario 10,07:1, botón principal 8,93:1 y etiquetas de estado entre 7,83:1 y 8,53:1; estas medidas cubren esos pares de colores, no una auditoría integral de accesibilidad.
+## Navegador (Windows, inventario aislado)
 
-- Tema casi negro con estados pastel: verificados los cuatro campos del equipo, entrada manual de SO/plataforma, selección mediante «Elegir guardado», guardado de notas de IP en la ficha, cambio a un equipo existente y creación de uno nuevo. Se retiraron de la interfaz las vistas/enlaces de historial y sus referencias; los registros existentes en almacenamiento no se borran. Verificados textos ES/EN y confirmaciones de cambio de estado.
+- Primer uso y alta de red con sugerencias del servidor. Escaneo inmediato con barra de progreso.
+- Panel lateral:
+  - reclamar;
+  - reclamar y asignar a un equipo nuevo;
+  - selección por arrastre y reclamación en lote;
+  - «Necesito una IP» sobre reservadas;
+  - nota con autoguardado durante un escaneo, sin perder el foco.
+- Un nombre de equipo `<b>x</b>` se muestra literal.
+- Equipos:
+  - añadir una IP reservada desde el desplegable;
+  - escribir una IP de otro equipo, con aviso de que se moverá;
+  - quitar una IP, que vuelve a reservada;
+  - guardar y eliminar con confirmación;
+  - un clic en una IP lleva al mapa con esa IP seleccionada.
+- Recarga con el hash `#red/<red>/<ip>`: restaura la red y la selección.
 
-La recarga del navegador se verificó con una IP abierta y búsqueda/filtro activos, una máquina bajo el filtro de reinstalación y un cambio de inglés a español. En Red, se conservan el rango, el filtro «Sin reclamar», la segunda página y el desplazamiento (4062 px en la prueba). La ficha LMS también permaneció abierta al recargar la instancia principal, sin modificar sus datos. Esta restauración guarda la ubicación por pestaña; no recupera borradores ni confirmaciones pendientes.
+## Límites
 
-Las etiquetas de estado y conectividad usan ahora fondos oscuros teñidos, bordes discretos y texto pastel. Se revisaron en la lista real los estados Activa, Asignada y Sin respuesta; se calcularon contrastes de texto entre 7,83:1 y 8,53:1 para todas las variantes. Las dimensiones de las etiquetas se mantienen compensando el borde con el relleno.
-
-Se reprodujo el fallo de ping en un proceso Python sin privilegios con `NoNewPrivileges` y `net.ipv4.ping_group_range=1 0`. Con únicamente `CAP_NET_RAW`, la comprobación de loopback responde. El ciclo de vida completo pasó tanto con el rango ICMP normal como restringido; la cuenta del servidor mantiene UID no root, NoNewPrivileges y solo CAP_NET_RAW en los conjuntos efectivo y límite. Se verificó además una unidad transitoria de systemd real en WSL2 con esas restricciones y ping a loopback; esta comprobación no certifica el despliegue completo del servicio. Los mensajes ES/EN distinguen permisos, falta de ruta y tiempo del proceso agotado.
-
-Reclamación visible por IP: verificados en un inventario aislado el botón «Reclamar IP» de cada fila, la reclamación sin crear máquina, la alternativa «Reclamar sin equipo» incluso tras validar un nombre vacío, la reclamación con alta de equipo y la selección por lotes. La primera vista de una dirección sin reclamar no contiene campos obligatorios. Comprobados textos ES/EN; en el inventario real solo se abrió la vista previa, sin reclamar ni modificar direcciones.
-
-Eliminación definitiva de máquinas retiradas: verificadas confirmación de nombre e identidad, rechazo de máquinas activas/reactivadas o con asignaciones, recuperación transaccional ante un fallo y conservación de reclamaciones, reutilización, otras máquinas, planes, revisiones y notas de IP. La migración 3→4 conserva asignaciones activas/cerradas, claves externas y restricciones; los identificadores eliminados no se reutilizan. Se revisaron en navegador ES/EN el bloqueo del botón hasta escribir el nombre exacto y Cancelar/Volver. El borrado HTTP se ejercitó solo en un inventario aislado, comprobando CSRF y la desaparición de la ficha. La base local se respaldó antes de migrar y se compararon todas sus filas existentes: idénticas tras la migración, sin borrar máquinas reales.
-
-## Límites de la verificación
-
-El adaptador de servicio del contenedor no reproduce systemd ni sus restricciones. Falta validar instalación completa, reinicio automático y desinstalación con systemd real en VM/WSL2 y certificar otras distribuciones. Las ramas de apt/dnf/zypper/pacman son mecanismos de instalación previstos, no una lista de distribuciones certificadas.
-
-El escaneo ICMP manual se probó contra loopback real en Windows y en el contenedor Linux como usuario del servicio. No se ha escaneado la LAN del usuario ni certificado cobertura de detección de dispositivos; los equipos que bloquean ICMP pueden no responder. La interfaz es adaptable mediante CSS; la revisión visual se realizó en el navegador de escritorio. No se ha certificado una matriz de navegadores móviles.
-
-Los tests no contienen direcciones o datos reales de infraestructura: usan rangos y máquinas de prueba. El contenedor de ciclo de vida es desechable y no instala servicios en el anfitrión.
+- El adaptador de servicio del contenedor no reproduce systemd completo. No se ha certificado una matriz de distribuciones ni de navegadores móviles.
+- Un firewall puede bloquear ICMP: el ping no detecta todos los equipos y una IP silenciosa no está garantizada como libre.
+- Los tests usan rangos y nombres de prueba, nunca datos reales de infraestructura.

@@ -151,6 +151,8 @@ export const EN = {
   "{n} ya tienen equipo ({names}) y se reasignarán.": "{n} already have a device ({names}) and will be reassigned.",
   "Quitar selección": "Clear selection",
   "Elige una IP del mapa": "Pick an IP on the map",
+  "Elige una IP de la lista": "Pick an IP from the list",
+  "Puedes asignarla a un equipo, quitárselo o liberarla.": "You can assign it to a device, remove its device or release it.",
   "Haz clic en una celda para reclamarla, asignarla a un equipo o liberarla.":
     "Click a cell to claim it, assign it to a device or release it.",
   "Tus reservadas en esta red ({n})": "Your reserved IPs in this network ({n})",

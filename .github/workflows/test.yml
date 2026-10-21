@@ -18,8 +18,11 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m unittest discover -s tests -v
-      - run: node --check lanclaim/static/app.js && node --check lanclaim/static/i18n.js
-      - run: node tests/test_i18n.cjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: for f in lanclaim/static/js/*.js; do node --check "$f"; done
+      - run: node tests/test_model.mjs && node tests/test_i18n.mjs
       - run: bash -n install.sh update.sh uninstall.sh scripts/common.sh
       - run: shellcheck -x -e SC1091 install.sh update.sh uninstall.sh scripts/common.sh tests/linux/lifecycle.sh
   lifecycle:

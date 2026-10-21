@@ -261,7 +261,11 @@ function multi(state) {
 }
 
 function idle(state) {
-  const out = [el("div", { class: "idle" }, el("h2", {}, t("Elige una IP del mapa")), el("p", { class: "muted" }, t("Haz clic en una celda para reclamarla, asignarla a un equipo o liberarla.")))];
+  const out = [
+    ui.net === "outside"
+      ? el("div", { class: "idle" }, el("h2", {}, t("Elige una IP de la lista")), el("p", { class: "muted" }, t("Puedes asignarla a un equipo, quitárselo o liberarla.")))
+      : el("div", { class: "idle" }, el("h2", {}, t("Elige una IP del mapa")), el("p", { class: "muted" }, t("Haz clic en una celda para reclamarla, asignarla a un equipo o liberarla."))),
+  ];
   if (ui.net && ui.net !== "outside") {
     const hosts = networkHosts(ui.net).filter((a) => !isEdge(ui.net, a));
     const reserved = hosts.filter((a) => ipStatus(state, a) === "res");
@@ -276,7 +280,7 @@ function idle(state) {
               { class: "chips" },
               reserved.map((a) => {
                 const note = ipRecord(state, a).note;
-                return el("button", { type: "button", class: "ipc res", title: note || a, onclick: () => goto(a) }, a, note ? " ✎" : "");
+                return el("button", { type: "button", class: "ipc res", title: note ? `${a} — ${note}` : a, onclick: () => goto(a) }, "." + a.split(".")[3], note ? " ✎" : "");
               }),
             )
           : el("p", { class: "hint" }, t("Ninguna. Reclama una IP libre para guardarla.")),

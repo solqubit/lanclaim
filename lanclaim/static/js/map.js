@@ -529,7 +529,6 @@ function outsideList(state) {
   for (const ip of outsideIps(state)) {
     const status = ipStatus(state, ip.address);
     const d = deviceOf(state, ip.address);
-    const info = pingInfo(state, ip.address);
     const fade = !matches(state, ip.address, ui.q);
     list.append(
       el(
@@ -543,7 +542,7 @@ function outsideList(state) {
         el("span", { class: "mono" }, ip.address),
         el("span", { class: `pill ${status}` }, status === "use" ? t("Asignada") : t("Reservada")),
         el("span", { class: "iprow-dev" }, d ? d.name : ip.note || ""),
-        info.up === null ? null : el("i", { class: "ld " + (info.up ? "up" : "down") }),
+        cellDot(state, ip.address),
       ),
     );
   }

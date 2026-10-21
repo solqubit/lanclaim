@@ -1,4 +1,4 @@
-# Operación de LanClaim 0.1.0
+# Operación de LanClaim 2.0.0
 
 ## Requisitos y alcance
 
@@ -26,7 +26,7 @@ En VM, configura la red de la VM según tu entorno (puente o NAT con reenvío). 
 systemd=true
 ```
 
-Reinicia WSL desde Windows cuando no haya trabajo en curso y comprueba `systemctl`. Las IP internas de WSL pueden cambiar; acceso local desde Windows y acceso desde la LAN son rutas diferentes. La página Mi red ofrece las subredes del servidor, que pueden diferir de la LAN que quieres administrar; introduce esa subred manualmente cuando corresponda.
+Reinicia WSL desde Windows cuando no haya trabajo en curso y comprueba `systemctl`. Las IP internas de WSL pueden cambiar; acceso local desde Windows y acceso desde la LAN son rutas diferentes. Al añadir una red, LanClaim sugiere las subredes del servidor, que pueden diferir de la LAN que quieres administrar; escribe esa subred manualmente cuando corresponda.
 
 ## Configuración
 
@@ -37,7 +37,10 @@ LANCLAIM_HOST=0.0.0.0
 LANCLAIM_PORT=8080
 LANCLAIM_DATA_DIR=/var/lib/lanclaim
 LANCLAIM_ALLOWED_HOSTS=
+LANCLAIM_SCAN_INTERVAL=300
 ```
+
+`LANCLAIM_SCAN_INTERVAL` fija los segundos entre pings automáticos de las direcciones vigiladas; `0` los desactiva (el botón **Escanear ahora** sigue funcionando). Las instalaciones anteriores no tienen esta línea y usan el valor por defecto, 300.
 
 Se admiten `localhost`, los nombres locales del servidor y direcciones IP literales. Para un nombre propio añade, por ejemplo, `LANCLAIM_ALLOWED_HOSTS=lanclaim.interna.example` sin esquema, ruta ni puerto. Un proxy debe conservar Host y el origen del navegador. Tras editar, ejecuta `sudo systemctl restart lanclaim`.
 
@@ -52,6 +55,8 @@ git pull --ff-only
 sudo ./update.sh
 ```
 
+**Desde la versión 0.x:** la versión 2 empieza con el inventario vacío. Al primer arranque descarta la base anterior (planes, máquinas, historial…). La copia `before-…sqlite3` que crea `update.sh` queda en `/var/lib/lanclaim/backups`.
+
 El script prepara una versión en `/opt/lanclaim/releases`, detiene el servicio, crea una copia SQLite consistente en `/var/lib/lanclaim/backups`, cambia el enlace `current`, inicia y comprueba el servicio. Si falla, restaura el código, la unidad y la base de datos anterior y comprueba la recuperación. Las versiones previas y copias se conservan. El script no realiza `git pull` por su cuenta ni decide la rama a desplegar.
 
 Si el servidor arranca pero una operación falla, consulta `sudo journalctl -u lanclaim -n 100`. No borres la base ni reinstales con purga para solucionar un error de arranque.
@@ -65,7 +70,7 @@ cd /opt/lanclaim/current
 sudo /usr/bin/python3 -m lanclaim.server --data-dir /var/lib/lanclaim --backup /ruta/segura/lanclaim.sqlite3
 ```
 
-El directorio de destino debe existir. Restringe el acceso a esa copia; contiene inventario e historial. No copies solamente el archivo SQLite en caliente con `cp`, porque puede haber cambios en el WAL.
+El directorio de destino debe existir. Restringe el acceso a esa copia; contiene el inventario. No copies solamente el archivo SQLite en caliente con `cp`, porque puede haber cambios en el WAL.
 
 Si la recuperación automática no logra arrancar el servicio:
 
@@ -81,26 +86,32 @@ Si la recuperación automática no logra arrancar el servicio:
 
 `sudo ./uninstall.sh --purge` requiere escribir `PURGAR`; elimina código, servicio, datos, copias internas, configuración y la cuenta propia. Se puede ejecutar desde el checkout incluso después de la desinstalación normal. Conserva dependencias compartidas, registros del sistema, copias externas y el checkout del usuario. El bloqueo de mantenimiento en `/run/lock` es temporal del sistema. No elimina software o recursos ajenos.
 
-## Uso administrativo
+## Uso
 
-- **Mi red:** enumera direcciones de un CIDR o rango, pagina de 64 en 64 y permite reclamar una selección. Hasta 4096 por operación. No determina si los equipos están encendidos.
-- **Mi espacio de IPs:** gestiona reclamaciones persistentes y disponibilidad administrativa. CIDR incluye extremos; no asignes direcciones de red/broadcast donde tu red no lo permita.
-- **Reinstalar / formatear:** conserva máquina e IPs. Al finalizar, edita la ficha y marca la reinstalación como terminada.
-- **Retirar:** cierra asignaciones conservando historial; las IPs vuelven a disponibles salvo revisiones abiertas.
-- **Eliminar definitivamente:** en Máquinas, abre una ficha retirada y pulsa esta acción. Escribe el nombre exacto para confirmar o utiliza Cancelar/Volver. Borra la ficha y sus notas y anonimiza su uso anterior de IPs, conservando reclamaciones y disponibilidad. Se bloquea si la máquina está activa, fue reactivada o todavía tiene asignaciones. Las copias anteriores conservan su contenido; no hay recuperación directa desde la aplicación.
-- **Idioma:** selector Español/English en la barra superior. Se recuerda en el navegador; el inventario permanece en el servidor. Cambiar de idioma recarga la vista.
+- **Red:** cada red registrada se ve como una cuadrícula.
+  - **＋ Red** añade otra red y sugiere las del servidor. Con **⋯** se renombra o se quita.
+  - Al hacer clic en una IP, el panel lateral permite reclamarla (queda reservada), asignarla a un equipo (si el nombre no existe, se crea), cambiar o quitar el equipo, escribir una nota (se guarda sola) o liberarla.
+  - Shift+clic o arrastrar selecciona varias.
+  - **Necesito una IP** propone tu primera reservada o, si no hay, la primera libre que no ha respondido en 7 días.
+- **Otras:** IPs tuyas fuera de cualquier red registrada, por ejemplo tras quitar una red.
+- **Equipos:** crear, editar y eliminar equipos.
+  - En el formulario se quitan IPs (vuelven a reservadas), se añaden reservadas o se escribe una IP nueva, que se reclama al guardar.
+  - Eliminar un equipo deja sus IPs reservadas.
+- **Idioma:** selector ES/EN en la barra superior. Se recuerda en el navegador.
+- **Teclado:** `/` busca y `Esc` limpia la selección y cierra formularios. Las flechas recorren la cuadrícula.
 
-Solo hay un espacio administrativo en esta versión: no permite registrar la misma dirección en redes aisladas distintas. No hay descubrimiento activo, autenticación multiusuario ni importación de inventarios externos.
+Solo hay un espacio de direcciones: la misma IP no puede registrarse en dos redes aisladas.
 
+## Ping automático
 
-## Escaneo manual de red
+El servidor hace ping a todas las direcciones vigiladas al arrancar y después cada `LANCLAIM_SCAN_INTERVAL` segundos. Lanza 32 pings simultáneos con 1 s de espera. Al añadir una red, esa red se escanea enseguida.
 
-En **Red**, selecciona una interfaz del servidor o introduce una IPv4, un rango o un CIDR y pulsa **Escanear red**. El límite es 1024 direcciones con 16 comprobaciones simultáneas y un solo trabajo activo. **Detener** impide iniciar nuevas comprobaciones; las que ya están en curso pueden terminar. **Ver rango** solo enumera (hasta 4096 direcciones).
+El ping solo informa: nunca reclama, libera ni reasigna. Un firewall puede bloquear ICMP, así que una IP que no responde no tiene por qué estar libre. Por eso el mapa marca con un anillo ámbar las libres que respondieron en los últimos 7 días.
 
-El escaneo usa `ping` del sistema. `install.sh` y `update.sh` preparan `iputils-ping` en Debian/Ubuntu o `iputils` en los demás gestores soportados. En una ejecución manual de Linux hay que instalar esa dependencia por separado. Windows usa su ping integrado. Consulta las opciones en la documentación de [Microsoft](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/ping) y [iputils](https://github.com/iputils/iputils/blob/master/doc/ping.xml).
+El escaneo usa el `ping` del sistema. `install.sh` y `update.sh` preparan `iputils-ping` (Debian/Ubuntu) o `iputils`. Windows usa su ping integrado.
 
-El servicio recibe únicamente `CAP_NET_RAW` mediante `AmbientCapabilities` y `CapabilityBoundingSet`. Esto permite ejecutar ping cuando el grupo de LanClaim no está autorizado en `net.ipv4.ping_group_range`. Conserva `User=lanclaim` y `NoNewPrivileges=true`; no se cambian permisos globales de ping ni parámetros del kernel. Consulta la documentación de [systemd](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#AmbientCapabilities=) y los [permisos de ping](https://man7.org/linux/man-pages/man8/ping.8.html). Una instalación anterior se repara descargando el código actual y ejecutando `sudo ./update.sh`, que regenera la unidad y reinicia el servicio con copia de seguridad previa.
+El servicio recibe únicamente `CAP_NET_RAW` mediante `AmbientCapabilities` y `CapabilityBoundingSet`, con `User=lanclaim` y `NoNewPrivileges=true`. No se cambian permisos globales de ping, parámetros del kernel ni reglas de firewall. Una instalación anterior sin estos permisos se repara con `sudo ./update.sh`.
 
-Las comprobaciones salen del servidor, no del navegador. En VM/WSL2 la red virtual detectada puede ser diferente de la LAN física: elige un rango alcanzable por ese servidor. Un firewall puede bloquear ICMP. **Sin respuesta** nunca significa disponible ni libera asignaciones. La columna muestra la fecha del último resultado; no promete estado en tiempo real.
+Si ping falla (permisos, falta de ruta, binario ausente), la interfaz muestra un aviso con la causa y el inventario sigue funcionando. Los detalles quedan en `sudo journalctl -u lanclaim -n 100 --no-pager`.
 
-Si ping no existe o no puede ejecutarse, el escaneo muestra un error y conserva la observación anterior. Los errores distinguen permisos, falta de ruta y agotamiento del tiempo del proceso; los fallos de ping registran su diagnóstico en `sudo journalctl -u lanclaim -n 100 --no-pager`. Comprueba `systemctl show lanclaim -p User -p NoNewPrivileges -p AmbientCapabilities -p CapabilityBoundingSet` y prueba el escaneo de `127.0.0.1` desde Red. Ejecutar `sudo -u lanclaim ping` fuera del servicio no reproduce sus capacidades y puede dar un resultado distinto. No se cambian reglas del firewall ni parámetros globales de red. Las observaciones se guardan en SQLite; el progreso del trabajo está en memoria y un reinicio no reanuda el escaneo.
+Las comprobaciones salen del servidor, no del navegador. En VM o WSL2 la red virtual puede ser distinta de la LAN física: registra una red alcanzable desde ese servidor.

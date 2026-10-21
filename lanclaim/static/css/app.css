@@ -132,7 +132,10 @@ textarea.in { resize: vertical; min-height: 54px; }
 .net.add:hover { color: var(--text); }
 .multi-toggle { display: none; }
 .multi-toggle.on { border-color: var(--res-line); color: var(--res); }
-@media (pointer: coarse) { .multi-toggle { display: inline-flex; } }
+@media (pointer: coarse) {
+  .multi-toggle { display: inline-flex; }
+  .hover, .legend .legend-tip { display: none; }
+}
 
 .net-form { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px; max-width: 640px; }
 .net-form .row:first-of-type { margin-top: 10px; }
@@ -198,6 +201,7 @@ textarea.in { resize: vertical; min-height: 54px; }
 .iprow:hover { border-color: var(--line-2); }
 .iprow.sel { border-color: #fff; }
 .iprow-dev { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iprow .dot { position: static; display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
 
 .mapfoot { margin-top: 10px; }
 .hover { min-height: 20px; color: var(--mute); font-size: 12.5px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -277,7 +281,7 @@ textarea.in { resize: vertical; min-height: 54px; }
   .grid { gap: 3px; }
   .c { font-size: 9px; border-radius: 4px; }
   .c .dot { top: 2px; right: 2px; width: 5px; height: 5px; }
-  .legend-tip, .scaninfo > span:first-child { display: none; }
+  .legend .legend-tip, .scaninfo > span:first-child { display: none; }
   .scaninfo { margin-left: 0; }
   .panel { position: static; max-height: none; min-height: 0; }
   .panel.open {
@@ -290,6 +294,8 @@ textarea.in { resize: vertical; min-height: 54px; }
   .iprow-dev { grid-column: 1 / -1; }
 }
 @media (max-width: 480px) {
+  .brand { font-size: 0; gap: 0; }
+  .tab { padding: 7px 10px; }
   .c { font-size: 0; }
   .net b { font-size: 12px; }
 }
