@@ -95,7 +95,14 @@ textarea.in { resize: vertical; min-height: 54px; }
 .lbl { display: block; color: var(--mute); font-size: 12px; margin-bottom: 6px; }
 .hint { color: var(--mute); font-size: 12px; margin-top: 6px; }
 .hint:empty { display: none; }
-.device-input select.in { margin-top: 6px; }
+.new-device { display: grid; gap: 6px; margin-top: 8px; }
+.os-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.os-picker:empty { display: none; }
+.os-chip { display: inline-flex; align-items: center; border: 1px solid var(--line-2); border-radius: 999px; background: var(--panel-2); }
+.os-pick { border: 0; background: none; padding: 3px 4px 3px 10px; font-size: 12.5px; color: var(--text); border-radius: 999px; }
+.os-pick:hover { color: var(--res); }
+.os-chip .x { border: 0; background: none; color: var(--mute); padding: 2px 8px 2px 3px; font-size: 14px; line-height: 1; }
+.os-chip .x:hover { color: var(--down); }
 .warn { color: var(--occ); font-size: 12.5px; margin: 8px 0 0; }
 .sub { color: var(--mute); font-size: 12.5px; margin: 2px 0 0; }
 

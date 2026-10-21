@@ -9,6 +9,7 @@ import {
   matches,
   networkHosts,
   networkOf,
+  osSuggestions,
   outsideIps,
   pingInfo,
   suggestIp,
@@ -98,5 +99,12 @@ assert.equal(agoText(5), "hace 5 min");
 assert.equal(agoText(180), "hace 3 h");
 assert.equal(agoText(1440), "hace 1 día");
 assert.equal(agoText(2880), "hace 2 días");
+
+const choices = ["Ubuntu 24.04", "Debian 12", "Debian 13", "Windows Server 2022", "TrueNAS Scale"];
+assert.deepEqual(osSuggestions(choices, ""), choices);
+assert.deepEqual(osSuggestions(choices, "deb"), ["Debian 12", "Debian 13"]);
+assert.deepEqual(osSuggestions(choices, " DEBIAN 12 "), []); // already chosen
+assert.deepEqual(osSuggestions(choices, "", 2), ["Ubuntu 24.04", "Debian 12"]);
+assert.deepEqual(osSuggestions(undefined, "x"), []);
 
 console.log("model: ok");

@@ -5,6 +5,17 @@ from pathlib import Path
 
 from lanclaim.db import Invalid, Store, parse_addresses
 
+V5_SCHEMA = """
+CREATE TABLE networks (id INTEGER PRIMARY KEY, cidr TEXT NOT NULL UNIQUE, sort_key INTEGER NOT NULL,
+ name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+CREATE TABLE devices (id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE,
+ type TEXT NOT NULL CHECK(type IN ('vm','fisica','contenedor','otro')),
+ os TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+CREATE TABLE ips (id INTEGER PRIMARY KEY, address TEXT NOT NULL UNIQUE, sort_key INTEGER NOT NULL,
+ device_id INTEGER REFERENCES devices(id) ON DELETE SET NULL, note TEXT NOT NULL DEFAULT '', claimed_at TEXT NOT NULL);
+CREATE INDEX ips_device ON ips(device_id);
+CREATE TABLE observations (address TEXT PRIMARY KEY, up INTEGER NOT NULL, checked_at TEXT NOT NULL, last_up_at TEXT);
+"""
 T1 = '2026-10-21T10:00:00.000000+00:00'
 T2 = '2026-10-21T10:05:00.000000+00:00'
 
@@ -30,12 +41,53 @@ class StoreTests(unittest.TestCase):
         db.executescript("CREATE TABLE ips(x); CREATE TABLE machines(y); INSERT INTO ips VALUES (1); PRAGMA user_version=4;")
         db.close()
         store = Store(old)
-        self.assertEqual(store.state(), {'networks': [], 'ips': [], 'devices': [], 'observations': {}})
+        self.assertEqual(store.state(), {'networks': [], 'ips': [], 'devices': [], 'observations': {}, 'os_choices': []})
         db = sqlite3.connect(old)
-        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 5)
+        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         db.close()
         self.assertNotIn('machines', tables)
+
+    def test_schema_5_upgrade_keeps_data_and_seeds_os_choices(self):
+        old = Path(self.temp.name) / 'v5.sqlite3'
+        db = sqlite3.connect(old)
+        db.executescript(V5_SCHEMA + """
+            INSERT INTO devices(name, name_key, type, os, note, created_at) VALUES('glpi','glpi','vm','Debian 12','','t');
+            INSERT INTO devices(name, name_key, type, os, note, created_at) VALUES('nas','nas','fisica','','','t');
+            INSERT INTO ips(address, sort_key, device_id, note, claimed_at) VALUES('192.168.1.10', 3232235786, 1, '', 't');
+            PRAGMA user_version=5;""")
+        db.close()
+        state = Store(old).state()
+        self.assertEqual([d['name'] for d in state['devices']], ['glpi', 'nas'])
+        self.assertEqual(state['ips'][0]['device_id'], 1)
+        self.assertEqual(state['os_choices'], ['Debian 12'])
+
+    def test_os_choices_are_remembered(self):
+        glpi = self.store.create_device({'name': 'glpi', 'type': 'vm', 'os': 'Debian 12'})
+        self.store.create_device({'name': 'k3s', 'type': 'vm', 'os': 'Ubuntu 24.04'})
+        self.assertEqual(self.store.state()['os_choices'], ['Ubuntu 24.04', 'Debian 12'])  # most recent first
+        self.store.update_device(glpi, {'name': 'glpi', 'type': 'vm', 'os': 'debian 12'})
+        self.assertEqual(self.store.state()['os_choices'], ['debian 12', 'Ubuntu 24.04'])  # one entry, latest spelling
+        self.store.delete_device(glpi)
+        self.assertIn('debian 12', self.store.state()['os_choices'])  # survives the device
+        self.store.update_device(self.device_named('k3s')['id'], {'name': 'k3s', 'type': 'vm', 'os': ''})
+        self.assertEqual(len(self.store.state()['os_choices']), 2)  # empty OS is not a choice
+
+    def test_new_device_from_claim_records_os(self):
+        self.store.claim(['192.168.1.30'], {'name': 'pihole', 'type': 'contenedor', 'os': ' Debian 12 '})
+        self.assertEqual(self.device_named('pihole')['os'], 'Debian 12')
+        self.assertEqual(self.store.state()['os_choices'], ['Debian 12'])
+        self.store.claim(['192.168.1.31'], {'name': 'PIHOLE', 'type': 'vm', 'os': 'Windows'})
+        self.assertEqual(self.device_named('pihole')['os'], 'Debian 12')  # existing device untouched
+        with self.assertRaises(Invalid):
+            self.store.claim(['192.168.1.32'], {'name': 'x', 'type': 'vm', 'os': 'y' * 121})
+
+    def test_forget_os_choice(self):
+        self.store.create_device({'name': 'glpi', 'type': 'vm', 'os': 'Debian 12'})
+        self.store.forget_os('DEBIAN 12')
+        self.assertEqual(self.store.state()['os_choices'], [])
+        self.assertEqual(self.device_named('glpi')['os'], 'Debian 12')  # the device keeps its OS
+        self.store.forget_os('nada')  # forgetting an unknown value is harmless
 
     def test_reopening_keeps_data(self):
         self.store.claim(['192.168.1.10'])

@@ -142,3 +142,10 @@ export function minutesSince(iso, nowMs = Date.now()) {
 export function byIp(a, b) {
   return ipToInt(a) - ipToInt(b);
 }
+
+// SO guardados que encajan con lo escrito (más recientes primero); nada si ya está elegido uno exacto.
+export function osSuggestions(choices, typed, limit = 8) {
+  const q = String(typed || "").trim().toLowerCase();
+  const list = (choices || []).filter((name) => name.toLowerCase() !== q && name.toLowerCase().includes(q));
+  return list.slice(0, limit);
+}

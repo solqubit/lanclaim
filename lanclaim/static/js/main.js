@@ -97,6 +97,11 @@ export function act(path, body, okMessage, { quiet = false } = {}) {
   return result;
 }
 
+// Quitar un SO de la lista guardada sin repintar (el formulario abierto sigue igual).
+export function forgetOs(name) {
+  return act("os/forget", { name }, t("«{name}» quitado de la lista", { name }), { quiet: true });
+}
+
 export function goto(address) {
   ui.view = "red";
   ui.net = networkOf(state, address)?.cidr || "outside";

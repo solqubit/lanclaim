@@ -24,6 +24,7 @@ Every address is in one of four states:
 - **Devices:** cards with name, type (VM, physical, container, other), OS, note and IPs.
   - When editing a device you can remove an IP (it goes back to reserved), add one of your reserved IPs, or type a new IP, which is claimed on the spot.
   - Deleting a device keeps its IPs as reserved.
+  - Operating systems you have typed are remembered and offered as one-click buttons, also when you create a device straight from the map.
 - **Automatic ping:** the server pings every watched address every 5 minutes (`LANCLAIM_SCAN_INTERVAL`, in seconds; `0` turns it off). You can also press **Scan now**.
   - A green dot means the device answers and a red dot means it does not. An amber ring marks a free IP that answered in the last 7 days, probably a device that is switched off.
   - Ping never changes what is yours. A firewall may block ICMP, so a silent IP is not proof that it is free.

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 MAX_ADDRESSES = 4096
 MIN_PREFIX, MAX_PREFIX = 22, 30
 DEVICE_TYPES = ('vm', 'fisica', 'contenedor', 'otro')
@@ -30,7 +30,11 @@ CREATE INDEX ips_device ON ips(device_id);
 CREATE TABLE observations (
  address TEXT PRIMARY KEY, up INTEGER NOT NULL, checked_at TEXT NOT NULL, last_up_at TEXT
 );
+""" + """
+-- v6: sistemas operativos ya usados, independientes de los equipos que los usaron.
+CREATE TABLE os_choices (name TEXT NOT NULL, name_key TEXT PRIMARY KEY, used_at TEXT NOT NULL);
 """
+OS_CHOICES_V6 = SCHEMA[SCHEMA.index('-- v6'):]
 
 
 class Invalid(ValueError):
@@ -165,8 +169,15 @@ class Store:
             version = db.execute('PRAGMA user_version').fetchone()[0]
             if version > SCHEMA_VERSION:
                 raise RuntimeError('La base de datos pertenece a una versión más nueva de LanClaim.')
-            if version != SCHEMA_VERSION:
-                # Las versiones anteriores no se conservan: se descarta todo y se empieza vacío.
+            if version == 5:
+                db.executescript(f'''BEGIN;
+{OS_CHOICES_V6}
+INSERT OR IGNORE INTO os_choices(name, name_key, used_at)
+ SELECT os, lower(os), created_at FROM devices WHERE os <> '' ORDER BY created_at;
+PRAGMA user_version={SCHEMA_VERSION};
+COMMIT;''')
+            elif version != SCHEMA_VERSION:
+                # Las versiones 0.x (esquemas 1-4) no se conservan: se descarta todo y se empieza vacío.
                 objects = db.execute("SELECT type, name FROM sqlite_master WHERE type IN ('table','view') "
                                      "AND name NOT LIKE 'sqlite_%'").fetchall()
                 drops = ''.join(f'DROP {kind.upper()} IF EXISTS "{name.replace(chr(34), chr(34) * 2)}";\n'
@@ -214,9 +225,11 @@ class Store:
             devices = [dict(r) for r in db.execute('SELECT id, name, type, os, note FROM devices ORDER BY name_key')]
             rows = db.execute('SELECT address, up, checked_at, last_up_at FROM observations').fetchall()
             watched = set(self._watched(db))
+            os_choices = [r[0] for r in db.execute('SELECT name FROM os_choices ORDER BY used_at DESC, rowid DESC')]
         observations = {r['address']: {'up': bool(r['up']), 'checked_at': r['checked_at'], 'last_up_at': r['last_up_at']}
                         for r in rows if r['address'] in watched}
-        return {'networks': networks, 'ips': ips, 'devices': devices, 'observations': observations}
+        return {'networks': networks, 'ips': ips, 'devices': devices, 'observations': observations,
+                'os_choices': os_choices}
 
     def watched_addresses(self):
         with self.connect() as db:
@@ -332,9 +345,21 @@ class Store:
         row = db.execute('SELECT id FROM devices WHERE name_key=?', (name.casefold(),)).fetchone()
         if row:
             return row['id']
-        return self._insert_device(db, _device_fields({'name': name, 'type': device.get('type')}))
+        return self._insert_device(db, _device_fields({'name': name, 'type': device.get('type'), 'os': device.get('os')}))
+
+    def _remember_os(self, db, os_name):
+        if os_name:
+            db.execute('INSERT INTO os_choices(name, name_key, used_at) VALUES(?,?,?) '
+                       'ON CONFLICT(name_key) DO UPDATE SET name=excluded.name, used_at=excluded.used_at',
+                       (os_name, os_name.casefold(), now()))
+
+    def forget_os(self, name):
+        name = _text({'name': name}, 'name', 120, label='sistema operativo')
+        with self.transaction() as db:
+            db.execute('DELETE FROM os_choices WHERE name_key=?', (name.casefold(),))
 
     def _insert_device(self, db, fields):
+        self._remember_os(db, fields['os'])
         try:
             return db.execute('INSERT INTO devices(name, name_key, type, os, note, created_at) VALUES(?,?,?,?,?,?)',
                               (fields['name'], fields['name'].casefold(), fields['type'], fields['os'],
@@ -372,6 +397,7 @@ class Store:
                                (fields['name'].casefold(), device_id)).fetchone()
             if clash:
                 raise Invalid(f'Ya existe un equipo llamado «{fields["name"]}».')
+            self._remember_os(db, fields['os'])
             db.execute('UPDATE devices SET name=?, name_key=?, type=?, os=?, note=? WHERE id=?',
                        (fields['name'], fields['name'].casefold(), fields['type'], fields['os'], fields['note'], device_id))
             self._change_device_ips(db, device_id, add, remove)

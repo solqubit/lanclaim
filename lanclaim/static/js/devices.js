@@ -1,8 +1,8 @@
 // Vista Equipos: tarjetas con sus IPs y formulario con gestión de IPs.
 import { t, typeLabel } from "./i18n.js";
-import { act, goto, isBusy, markDirty, render, ui } from "./main.js";
+import { act, forgetOs, goto, isBusy, markDirty, render, ui } from "./main.js";
 import { byIp, deviceIps, deviceOf, networkOf, pingInfo } from "./model.js";
-import { confirmButton, el, toast } from "./ui.js";
+import { confirmButton, el, osPicker, toast } from "./ui.js";
 
 const TYPES = ["vm", "fisica", "contenedor", "otro"];
 
@@ -139,9 +139,7 @@ function deviceForm(state, d) {
     { class: "in", "aria-label": t("Tipo"), onchange: markDirty },
     TYPES.map((k) => el("option", { value: k, selected: d ? d.type === k : k === "vm" }, typeLabel(k))),
   );
-  const osValues = [...new Set(state.devices.map((x) => x.os).filter(Boolean))].sort();
-  const osList = el("datalist", { id: "os-values" }, osValues.map((v) => el("option", { value: v })));
-  const os = el("input", { class: "in", value: d ? d.os : "", maxlength: 120, list: "os-values", placeholder: t("Sistema operativo"), "aria-label": t("Sistema operativo"), oninput: markDirty });
+  const os = el("input", { class: "in", value: d ? d.os : "", maxlength: 120, autocomplete: "off", placeholder: t("Sistema operativo"), "aria-label": t("Sistema operativo"), oninput: markDirty });
   const note = el("textarea", { class: "in", rows: 2, maxlength: 2000, value: d ? d.note : "", placeholder: t("Nota"), "aria-label": t("Nota"), oninput: markDirty });
 
   const chips = el("div", { class: "chips form-ips" });
@@ -242,7 +240,8 @@ function deviceForm(state, d) {
     { class: "card form" },
     el("div", { class: "form-title" }, d ? t("Editar {name}", { name: d.name }) : t("Nuevo equipo")),
     name,
-    el("div", { class: "two" }, type, el("div", {}, os, osList)),
+    el("div", { class: "two" }, type, os),
+    osPicker(state, os, forgetOs),
     note,
     el("span", { class: "lbl" }, t("IPs de este equipo")),
     chips,

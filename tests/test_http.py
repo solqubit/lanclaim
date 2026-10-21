@@ -72,7 +72,7 @@ class HttpTests(unittest.TestCase):
         code, _, body = self.request('/api/state')
         state = json.loads(body)
         self.assertEqual(code, 200)
-        for key in ('networks', 'ips', 'devices', 'observations', 'scan', 'csrf', 'version'):
+        for key in ('networks', 'ips', 'devices', 'observations', 'os_choices', 'scan', 'csrf', 'version'):
             self.assertIn(key, state)
         self.assertEqual(state['version'], '2.0.0')
 
@@ -95,6 +95,13 @@ class HttpTests(unittest.TestCase):
         self.assertNotIn('192.168.50.11', [i['address'] for i in state['ips']])
         code, state = self.post('/api/devices/delete', {'id': device['id']})
         self.assertEqual((code, state['devices']), (200, []))
+
+    def test_forget_os_route(self):
+        self.post('/api/devices/create', {'name': 'os-test', 'type': 'vm', 'os': 'FreeBSD 14'})
+        code, state = self.post('/api/os/forget', {'name': 'FreeBSD 14'})
+        self.assertEqual(code, 200)
+        self.assertNotIn('FreeBSD 14', state['os_choices'])
+        self.post('/api/devices/delete', {'id': next(d['id'] for d in state['devices'] if d['name'] == 'os-test')})
 
     def test_network_routes(self):
         code, state = self.post('/api/networks/add', {'cidr': '172.20.0.0/28', 'name': 'Lab'})

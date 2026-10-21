@@ -1,6 +1,6 @@
 // Utilidades de interfaz. Todo el contenido del usuario se inserta como texto.
 import { t, typeLabel } from "./i18n.js";
-import { findDeviceByName } from "./model.js";
+import { findDeviceByName, osSuggestions } from "./model.js";
 
 const PROPS = new Set(["value", "checked", "selected", "disabled", "hidden", "open"]);
 
@@ -59,9 +59,58 @@ export function confirmButton({ label, sureLabel, onConfirm, className = "btn da
   return button;
 }
 
+// Botones con los SO ya usados: un clic rellena el campo; × lo quita de la lista.
+export function osPicker(state, input, onForget) {
+  const box = el("div", { class: "os-picker" });
+  let choices = [...(state.os_choices || [])];
+  const paint = () => {
+    const names = osSuggestions(choices, input.value);
+    box.replaceChildren(
+      ...names.map((name) =>
+        el(
+          "span",
+          { class: "os-chip" },
+          el(
+            "button",
+            {
+              type: "button",
+              class: "os-pick",
+              title: t("Usar {name}", { name }),
+              onclick: () => {
+                input.value = name;
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.focus();
+              },
+            },
+            name,
+          ),
+          el(
+            "button",
+            {
+              type: "button",
+              class: "x",
+              title: t("Quitar de la lista"),
+              "aria-label": t("Quitar {name} de la lista", { name }),
+              onclick: () => {
+                choices = choices.filter((c) => c !== name);
+                paint();
+                onForget?.(name);
+              },
+            },
+            "×",
+          ),
+        ),
+      ),
+    );
+  };
+  input.addEventListener("input", paint);
+  paint();
+  return box;
+}
+
 let inputSeq = 0;
-// Campo de equipo: elige uno existente o escribe un nombre nuevo (y su tipo).
-export function deviceInput(state, { placeholder, value = "" } = {}) {
+// Campo de equipo: elige uno existente o escribe un nombre nuevo (con su tipo y SO).
+export function deviceInput(state, { placeholder, value = "", onForgetOs } = {}) {
   const id = `dev-${++inputSeq}`;
   const list = el("datalist", { id: `${id}-list` }, state.devices.map((d) => el("option", { value: d.name })));
   const input = el("input", {
@@ -75,14 +124,16 @@ export function deviceInput(state, { placeholder, value = "" } = {}) {
   });
   const type = el(
     "select",
-    { class: "in", "aria-label": t("Tipo"), hidden: true },
+    { class: "in", "aria-label": t("Tipo") },
     ["vm", "fisica", "contenedor", "otro"].map((k) => el("option", { value: k }, typeLabel(k))),
   );
+  const os = el("input", { class: "in", maxlength: 120, autocomplete: "off", placeholder: t("Sistema operativo (opcional)"), "aria-label": t("Sistema operativo") });
+  const extra = el("div", { class: "new-device", hidden: true }, type, os, osPicker(state, os, onForgetOs));
   const hint = el("div", { class: "hint" });
   const sync = () => {
     const name = input.value.trim();
     const existing = findDeviceByName(state, name);
-    type.hidden = !name || !!existing;
+    extra.hidden = !name || !!existing;
     hint.textContent = !name
       ? ""
       : existing
@@ -92,13 +143,13 @@ export function deviceInput(state, { placeholder, value = "" } = {}) {
   input.addEventListener("input", sync);
   sync();
   return {
-    node: el("div", { class: "device-input" }, input, list, type, hint),
+    node: el("div", { class: "device-input" }, input, list, hint, extra),
     input,
     read() {
       const name = input.value.trim();
       if (!name) return null;
       const existing = findDeviceByName(state, name);
-      return existing ? { id: existing.id } : { name, type: type.value };
+      return existing ? { id: existing.id } : { name, type: type.value, os: os.value.trim() };
     },
     focus() {
       input.focus();

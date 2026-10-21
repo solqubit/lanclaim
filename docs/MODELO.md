@@ -1,6 +1,6 @@
 # Modelo de datos (versión 2)
 
-SQLite, esquema `user_version = 5`, en `lanclaim/db.py`. Al arrancar con una base de una versión anterior (esquemas 1 a 4) se descartan todas sus tablas y se crea el esquema vacío: la versión 2 no conserva datos de la 0.x.
+SQLite, esquema `user_version = 6`, en `lanclaim/db.py`. Al arrancar con una base de la 0.x (esquemas 1 a 4) se descartan todas sus tablas y se crea el esquema vacío: la versión 2 no conserva datos de la 0.x. Una base v5 se actualiza a v6 sin perder nada (se añade `os_choices` con los SO de los equipos existentes).
 
 ## Tablas
 
@@ -9,6 +9,7 @@ SQLite, esquema `user_version = 5`, en `lanclaim/db.py`. Al arrancar con una bas
 | `networks` | `id`, `cidr`, `name`, `created_at` | IPv4 de /22 a /30. No pueden solaparse. Entre todas, como máximo 4096 direcciones. |
 | `devices` | `id`, `name`, `type`, `os`, `note`, `created_at` | `name` es obligatorio y único sin distinguir mayúsculas. `type` puede ser `vm`, `fisica`, `contenedor` u `otro`. |
 | `ips` | `id`, `address`, `device_id`, `note`, `claimed_at` | Una fila por IP reclamada. Si `device_id` es nulo, la IP está reservada. Al borrar el equipo, `device_id` pasa a nulo. |
+| `os_choices` | `name`, `name_key`, `used_at` | SO ya usados, sin repetir mayúsculas/minúsculas. Se añaden al crear o editar un equipo y sobreviven aunque se borre el equipo. Se muestran como botones, el más reciente primero; × los quita de la lista. |
 | `observations` | `address`, `up`, `checked_at`, `last_up_at` | Último ping de cada dirección vigilada. `last_up_at` guarda la última vez que respondió. |
 
 ## Estados de una dirección (derivados)

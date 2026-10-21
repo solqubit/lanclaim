@@ -1,6 +1,6 @@
 // Panel lateral: acciones según lo seleccionado en el mapa.
 import { t, typeLabel } from "./i18n.js";
-import { act, editDevice, goto, markDirty, render, ui } from "./main.js";
+import { act, editDevice, forgetOs, goto, markDirty, render, ui } from "./main.js";
 import { agoText, byIp, deviceIps, deviceOf, ipRecord, ipStatus, minutesSince, networkHosts, isEdge, pingInfo } from "./model.js";
 import { confirmButton, deviceInput, el, toast } from "./ui.js";
 
@@ -107,7 +107,7 @@ function noteBox(state, address) {
 }
 
 function assignForm(state, addresses, { label, button, claim }) {
-  const input = deviceInput(state);
+  const input = deviceInput(state, { onForgetOs: forgetOs });
   const submit = () => {
     const device = input.read();
     if (!device) {
