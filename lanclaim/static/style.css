@@ -1364,7 +1364,7 @@ html {
   }
 }
 
-/* Quiet surfaces; pastel fills identify state without lighting up the workspace. */
+/* Dark tinted states with pastel text keep contrast without bright filled blocks. */
 :root {
   --line: #383b45;
   --muted: #b9bdc9;
@@ -1380,51 +1380,54 @@ html {
 }
 .badge {
   font-size: 12px;
-  font-weight: 700;
-  padding: 5px 10px;
-  border: 0;
+  font-weight: 650;
+  padding: 4px 9px;
+  border: 1px solid #444752;
   border-radius: 5px;
 }
 .badge.available,
-.badge.active {
-  color: #193128;
-  background: #badacb;
+.badge.active,
+.connection.responding {
+  color: #afd0be;
+  background: #1d2e29;
+  border-color: #355046;
 }
 .badge.assigned {
-  color: #1d2c42;
-  background: #becfe8;
+  color: #b3c6e3;
+  background: #202b3b;
+  border-color: #3c4c65;
 }
 .badge.planned {
-  color: #35233f;
-  background: #d2bde2;
+  color: #cfbde2;
+  background: #2b2535;
+  border-color: #51405e;
 }
 .badge.review,
 .badge.reinstalling {
-  color: #382b13;
-  background: #e4cea4;
+  color: #ddc595;
+  background: #332c20;
+  border-color: #554733;
 }
 .badge.retired,
 .badge.outside {
-  color: #292b33;
-  background: #bfc3cf;
+  color: #bdc0cd;
+  background: #282a32;
+  border-color: #444752;
 }
 .ip-state-line .badge {
-  padding: 7px 12px;
+  padding: 6px 11px;
   font-size: 13px;
 }
 .connection {
-  padding: 4px 8px;
+  padding: 3px 7px;
+  border: 1px solid;
   border-radius: 5px;
   font-weight: 650;
 }
-.connection.responding {
-  background: #badacb;
-  color: #193128;
-}
 .connection.no_response {
-  background: #343039;
-  color: #e1c3c7;
-  border: 1px solid #67565e;
+  background: #30252c;
+  color: #d5b5bd;
+  border-color: #51404a;
 }
 .field-hint {
   display: block;
