@@ -67,6 +67,24 @@ class ScannerTests(unittest.TestCase):
         release.set()
         self.assertEqual(wait_idle(self.scanner)['done'], 6)
 
+    def test_scan_now_during_a_cycle_queues_another(self):
+        # A network added while a scan runs must not wait for the next periodic cycle.
+        entered, release = threading.Event(), threading.Event()
+
+        def blocking(address):
+            entered.set()
+            release.wait(3)
+            return 'responding'
+
+        self.scanner.probe = blocking
+        self.scanner.scan_now()
+        self.assertTrue(entered.wait(3))
+        self.store.add_network('10.0.1.0/30')
+        self.scanner.scan_now()
+        release.set()
+        wait_idle(self.scanner)
+        self.assertIn('10.0.1.1', self.store.state()['observations'])
+
     def test_probe_error_is_reported_and_loop_survives(self):
         def broken(address):
             raise PingUnavailable(PING_PERMISSION_ERROR)

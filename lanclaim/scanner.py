@@ -72,6 +72,7 @@ class Scanner:
         self.loop = None
         self.worker = None
         self.job = {'running': False, 'total': 0, 'done': 0, 'finished_at': None, 'error': ''}
+        self.again = False  # alguien pidió escanear mientras otro ciclo estaba en curso
 
     def status(self):
         with self.lock:
@@ -84,7 +85,9 @@ class Scanner:
 
     def scan_now(self):
         with self.lock:
-            if not self.job['running'] and not self.stopping.is_set():
+            if self.job['running']:
+                self.again = True
+            elif not self.stopping.is_set():
                 self._begin()
                 self.worker = threading.Thread(target=self._cycle, name='lanclaim-scan', daemon=True)
                 self.worker.start()
@@ -110,6 +113,18 @@ class Scanner:
             self.stopping.wait(self.interval)
 
     def _cycle(self):
+        # Una petición recibida durante el ciclo (p. ej. una red recién añadida) provoca otra pasada enseguida.
+        while True:
+            self._run_once()
+            with self.lock:
+                if self.again and not self.stopping.is_set():
+                    self.again = False
+                    self._begin()
+                    continue
+                self.job['running'] = False
+                return
+
+    def _run_once(self):
         error = ''
         skipped = []
         try:
@@ -164,7 +179,7 @@ class Scanner:
         with self.lock:
             if error and error != self.job['error']:
                 log.warning('%s', error)
-            self.job.update(running=False, finished_at=now(), error=error)
+            self.job.update(finished_at=now(), error=error)
 
     def _save(self, batch):
         self.store.record_observations(batch, now())
