@@ -1105,7 +1105,26 @@ tbody .selected-row:hover {
 }
 .save-ip-only {
   margin: 0 0 18px;
-  padding-left: 0;
+}
+.claim-ip-intro {
+  max-width: 640px;
+  margin-inline: auto;
+}
+.claim-ip-intro h3 {
+  margin: 0 0 8px;
+  font-size: 19px;
+  color: #ececf2;
+}
+.claim-ip-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 24px 0 20px;
+}
+.claim-ip-action {
+  border: 1px solid #51485e;
+  background: #24212e;
+  border-radius: 5px;
 }
 @media (max-width: 1000px) {
   .app-header {

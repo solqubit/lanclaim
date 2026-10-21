@@ -415,7 +415,7 @@ function renderNetworkContent() {
                             ${ip ? badge(ip.status) : html`<span class="muted">Sin reclamar</span>`}
                           </td>
                           <td>
-                            ${ip ? html`<button class="row-action" data-action="ip-detail" data-id="${ip.id}">Ver IP</button>` : html`<button class="row-action" data-open-address="${esc(address)}">Añadir equipo</button>`}
+                            ${ip ? html`<button class="row-action" data-action="ip-detail" data-id="${ip.id}">Ver IP</button>` : html`<button class="row-action claim-ip-action" data-open-address="${esc(address)}">Reclamar IP</button>`}
                           </td>
                         </tr>`;
                       })
@@ -976,7 +976,38 @@ function ipAction(action, id, title, description, tone = "") {
 function openAddress(address) {
   const ip = state.ips.find((item) => item.address === address);
   if (ip) return showIp(ip.id);
-  ipMachineForm(address);
+  inspectorAnchor = { address };
+  openInspector(
+    address,
+    html`<section class="claim-ip-intro">
+      <h3>Reclamar esta IP</h3>
+      <p>
+        Se añadirá a Mis IPs como disponible. Puedes asignarle un equipo más
+        adelante.
+      </p>
+      <div class="claim-ip-options">
+        <button
+          type="button"
+          class="primary"
+          data-claim-address="${esc(address)}"
+        >
+          Reclamar IP
+        </button>
+        <button
+          type="button"
+          class="secondary"
+          data-add-device-address="${esc(address)}"
+        >
+          Reclamar y añadir equipo
+        </button>
+      </div>
+      <p class="help">
+        Reclamar no reserva la dirección en el router ni cambia su uso en la
+        red.
+      </p>
+    </section>`,
+    { root: true },
+  );
 }
 function ipMachineForm(address, { edit = false, replace = false } = {}) {
   const ip = state.ips.find((item) => item.address === address);
@@ -1008,7 +1039,7 @@ function ipMachineForm(address, { edit = false, replace = false } = {}) {
               >`
             : ""
         }
-        ${!ip ? html`<button type="button" class="row-action save-ip-only" data-claim-address="${esc(address)}">Guardar solo la IP, sin equipo</button>` : ""}
+        ${!ip ? html`<button type="button" class="secondary save-ip-only" data-claim-address="${esc(address)}">Reclamar sin equipo</button>` : ""}
         <div id="ip-new-machine">
           ${deviceFields({ ...values, name: values?.name || (!replace && ip?.plan?.target) || "" })}
         </div>
@@ -1528,8 +1559,25 @@ document.addEventListener("click", async (event) => {
     } else if (button.dataset.openAddress) {
       await openAddress(button.dataset.openAddress);
     } else if (button.dataset.claimAddress) {
-      networkSelected = new Set([button.dataset.claimAddress]);
-      await dispatch("claim-selected");
+      const address = button.dataset.claimAddress;
+      submitting = true;
+      button.disabled = true;
+      try {
+        await mutate(
+          "claim",
+          { addresses: address },
+          t("IP reclamada. Ya está disponible en Mis IPs."),
+        );
+        networkSelected.delete(address);
+        renderView();
+        const claimed = state.ips.find((ip) => ip.address === address);
+        if (claimed) await showIp(claimed.id);
+      } finally {
+        submitting = false;
+        button.disabled = false;
+      }
+    } else if (button.dataset.addDeviceAddress) {
+      ipMachineForm(button.dataset.addDeviceAddress);
     } else if (button.dataset.network) {
       networkQuery = button.dataset.network;
       await listNetwork();
