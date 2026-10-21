@@ -21,7 +21,8 @@ function panelSig(state, ui) {
 }
 
 export function renderPanel(state, ui) {
-  const panel = el("aside", { class: "panel" + (ui.sel.size ? " open" : ""), id: "panel", "aria-label": t("Detalles"), "data-sig": panelSig(state, ui) });
+  const tone = ui.sel.size === 1 ? " tone-" + ipStatus(state, [...ui.sel][0]) : ui.sel.size > 1 ? " tone-multi" : "";
+  const panel = el("aside", { class: "panel" + tone + (ui.sel.size ? " open" : ""), id: "panel", "aria-label": t("Detalles"), "data-sig": panelSig(state, ui) });
   if (ui.sel.size === 0) {
     panel.append(idle(state));
     return panel;

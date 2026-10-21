@@ -72,6 +72,7 @@ function swap(oldNode, fresh) {
 
 function patchGrid(wrap, state) {
   if (!wrap) return;
+  wrap.classList.toggle("scanning", !!state.scan.running);
   const cidr = ui.net;
   for (const cell of wrap.querySelectorAll("[data-ip]")) {
     const address = cell.dataset.ip;
@@ -365,7 +366,16 @@ function firstRun() {
 
 function summary(state) {
   const c = counts(state, ui.net);
+  const total = c.use + c.res + c.occ + c.free || 1;
   const box = el("div", { class: "sum", id: "sum" });
+  // Barra de ocupación: la proporción de la red de un vistazo.
+  box.append(
+    el(
+      "div",
+      { class: "occ-bar", role: "img", "aria-label": t("{a} asignadas, {b} reservadas, {c} ocupadas, {d} libres", { a: c.use, b: c.res, c: c.occ, d: c.free }) },
+      ["use", "res", "occ", "free"].map((key) => el("i", { class: key + (ui.filter && ui.filter !== key ? " dim" : ""), style: { width: `${(c[key] / total) * 100}%` } })),
+    ),
+  );
   for (const key of ["use", "res", "occ", "free"]) {
     const on = ui.filter === key;
     box.append(
@@ -493,14 +503,16 @@ function cellTitle(state, address, cidr) {
 function grid(state) {
   const cidr = ui.net;
   const hosts = networkHosts(cidr);
-  const wrap = el("div", { class: "grids", "aria-label": t("Mapa de {cidr}", { cidr }) });
+  const wrap = el("div", { class: "grids" + (state.scan.running ? " scanning" : ""), "aria-label": t("Mapa de {cidr}", { cidr }) });
   for (let i = 0; i < hosts.length; i += 256) {
     const block = hosts.slice(i, i + 256);
     if (hosts.length > 256) {
       wrap.append(el("div", { class: "block-head" }, block[0].replace(/\.\d+$/, ".0/24")));
     }
+    // Frontal de switch: orejas de rack, etiqueta de fila (último octeto inicial) y 16 puertos por fila.
     const g = el("div", { class: "grid" });
-    for (const address of block) {
+    block.forEach((address, n) => {
+      if (n % 16 === 0) g.append(el("span", { class: "row-label", "aria-hidden": "true" }, "." + address.split(".")[3]));
       const edge = isEdge(cidr, address);
       g.append(
         el(
@@ -512,13 +524,14 @@ function grid(state) {
             title: cellTitle(state, address, cidr),
             disabled: edge,
             "aria-pressed": ui.sel.has(address) ? "true" : "false",
+            style: { "--i": String(n) },
           },
           address.split(".")[3],
           edge ? null : cellDot(state, address),
         ),
       );
-    }
-    wrap.append(g);
+    });
+    wrap.append(el("div", { class: "faceplate" }, el("i", { class: "ear left", "aria-hidden": "true" }), g, el("i", { class: "ear right", "aria-hidden": "true" })));
   }
   attachSelection(wrap, state, hosts.filter((a) => !isEdge(cidr, a)));
   return wrap;

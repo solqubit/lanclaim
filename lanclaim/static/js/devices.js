@@ -86,7 +86,7 @@ function card(state, d) {
   return el(
     "article",
     { class: "card", "data-device": d.id },
-    el("div", { class: "card-head" }, el("span", { class: "card-name" }, d.name), el("span", { class: "badge" }, typeLabel(d.type))),
+    el("div", { class: "card-head" }, typeIcon(d.type), el("span", { class: "card-name" }, d.name), el("span", { class: "badge" }, typeLabel(d.type))),
     el("div", { class: "card-os" }, d.os || "—"),
     d.note ? el("div", { class: "card-note" }, d.note) : null,
     el(
@@ -116,6 +116,26 @@ function card(state, d) {
       }),
     ),
   );
+}
+
+const ICONS = {
+  // VM: ventanas apiladas · Física: servidor de rack · Contenedor: cubo · Otro: nodo
+  vm: "M4 7h11v9H4zM8 4h12v9h-2",
+  fisica: "M4 5h16v5H4zM4 14h16v5H4zM7 7.5h.01M7 16.5h.01",
+  contenedor: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5",
+  otro: "M12 8a4 4 0 1 1 0 8a4 4 0 1 1 0-8M12 3v5M12 16v5M3 12h5M16 12h5",
+};
+
+function typeIcon(type) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", `type-ico ${type}`);
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", ICONS[type] || ICONS.otro);
+  svg.append(path);
+  return svg;
 }
 
 function pingDot(state, address) {
