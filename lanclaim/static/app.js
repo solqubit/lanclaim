@@ -1,0 +1,1345 @@
+"use strict";
+const $ = (selector, root = document) => root.querySelector(selector);
+const esc = (value) =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
+const labels = {
+  available: t("Disponible"),
+  assigned: t("Asignada"),
+  planned: t("Planificada"),
+  review: t("Pendiente de revisión"),
+  active: t("Activa"),
+  reinstalling: t("En reinstalación"),
+  retired: t("Retirada"),
+};
+const eventLabels = {
+  claimed: t("IP reclamada"),
+  machine_created: t("Máquina registrada"),
+  machine_edited: t("Ficha actualizada"),
+  assigned: t("IP asignada"),
+  released: t("IP liberada"),
+  planned: t("IP planificada"),
+  plan_executed: t("Plan ejecutado"),
+  cancel_plan: t("Plan cancelado"),
+  review_opened: t("Revisión abierta"),
+  resolve_review: t("Revisión resuelta"),
+  retire: t("Máquina retirada"),
+  reinstall: t("Reinstalación iniciada"),
+  finish_reinstall: t("Reinstalación finalizada"),
+  restore_machine: t("Máquina reactivada"),
+  ip_edited: t("Notas actualizadas"),
+};
+const fieldLabels = {
+  name: t("Nombre"),
+  description: t("Descripción"),
+  os: t("Sistema operativo"),
+  hostname: "Hostname",
+  mac: t("Dirección MAC"),
+  platform: t("Plataforma de virtualización"),
+  vm_id: t("Identificador de VM"),
+  tags: t("Etiquetas"),
+  notes: t("Notas"),
+};
+let state,
+  view = "ips",
+  filter = "all",
+  query = "",
+  historyRows = [],
+  historyFilter = {},
+  historyMore = false,
+  toastTimer,
+  submitting = false,
+  detailKey = null,
+  pageGeneration = 0;
+let networks = [],
+  networkAddresses = [],
+  networkSelected = new Set(),
+  networkQuery = "",
+  networkPage = 0,
+  networkBusy = false;
+const machine = (id) => state.machines.find((m) => m.id === id);
+const ipById = (id) => state.ips.find((ip) => ip.id === id);
+const badge = (status) =>
+  `<span class="badge ${esc(status)}">${esc(labels[status])}</span>`;
+const date = (value) =>
+  value
+    ? new Date(value).toLocaleString(language, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : t("Actual");
+const machineLink = (id) =>
+  `<button class="link-button" data-action="machine-detail" data-id="${id}">${esc(machine(id)?.name || t("Máquina"))}</button>`;
+const ipLink = (id) =>
+  `<button class="link-button ip-address" data-action="ip-detail" data-id="${id}">${esc(ipById(id)?.address || "IP")}</button>`;
+
+async function api(path, body) {
+  const options =
+    body === undefined
+      ? {}
+      : {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": state?.csrf || "",
+          },
+          body: JSON.stringify(body),
+        };
+  const response = await fetch("/api/" + path, options);
+  const data = await response.json();
+  if (!response.ok)
+    throw new Error(
+      data.error ? t(data.error) : t("No se pudo completar la operación."),
+    );
+  return data;
+}
+function toast(message) {
+  clearTimeout(toastTimer);
+  $("#toast").textContent = message;
+  $("#toast").hidden = false;
+  toastTimer = setTimeout(() => {
+    $("#toast").hidden = true;
+  }, 4500);
+}
+async function refresh() {
+  try {
+    state = await api("state");
+    $("#global-error").hidden = true;
+    $("#nav-count").textContent = state.counts.claimed;
+    $("#version").textContent = "v" + state.version;
+    renderStats();
+    if (view === "history") await loadHistory();
+    else renderView();
+  } catch (error) {
+    $("#global-error").textContent =
+      error.message + t(" Comprueba el servidor y pulsa Actualizar.");
+    $("#global-error").hidden = false;
+    if (!state)
+      $("#content").innerHTML = empty(
+        t("No pudimos abrir tu espacio"),
+        t(
+          "Tus datos permanecen en el servidor. Vuelve a intentar la conexión.",
+        ),
+      );
+    throw error;
+  }
+}
+function renderStats() {
+  const stats = [
+    ["claimed", t("IPs reclamadas"), t("Tu espacio personal"), "▦"],
+    ["available", t("Disponibles"), t("Listas para asignar"), "↗"],
+    [
+      "assigned",
+      t("Con asignación activa"),
+      t("Incluye las que requieren revisión"),
+      "▣",
+    ],
+    ["planned", t("Planificadas"), t("Para lo que viene"), "◷"],
+    ["review", t("Por revisar"), t("Discrepancias abiertas"), "◇"],
+  ];
+  $("#stats").innerHTML = stats
+    .map(
+      ([key, label, hint, mark], i) =>
+        `<button class="stat ${i === 0 ? "featured" : ""}" data-stat="${key}"><span class="stat-label">${label}</span><span class="stat-mark" aria-hidden="true">${mark}</span><span class="stat-value">${state.counts[key]}</span><span class="stat-hint">${hint}</span></button>`,
+    )
+    .join("");
+}
+function empty(title, text, buttons = "") {
+  return `<div class="empty"><span class="empty-symbol" aria-hidden="true">▦</span><h3>${esc(title)}</h3><p>${esc(text)}</p><div class="actions">${buttons}</div></div>`;
+}
+function navigate(next, nextFilter = "all") {
+  pageGeneration++;
+  view = next;
+  filter = nextFilter;
+  query = "";
+  historyRows = [];
+  historyFilter = {};
+  const titles = {
+    ips: [
+      t("Mi espacio de IPs"),
+      t("Administra lo que es tuyo. Ten claro qué puedes usar después."),
+      t("ESPACIO DE IPS"),
+    ],
+    network: [
+      t("Mi red"),
+      t(
+        "Mira las direcciones de tu red y elige cuáles incorporar a tu espacio.",
+      ),
+      t("MI RED"),
+    ],
+    machines: [
+      t("Mis máquinas"),
+      t("Cada equipo, sus direcciones y toda su historia."),
+      t("MÁQUINAS"),
+    ],
+    history: [
+      t("Historial"),
+      t("Cada cambio deja una huella. Nada de tu inventario se pierde."),
+      t("HISTORIAL"),
+    ],
+  };
+  const [title, subtitle, crumb] = titles[view];
+  $("#page-title").textContent = title;
+  $("#page-subtitle").textContent = subtitle;
+  $("#breadcrumb").textContent = crumb;
+  $("#stats").hidden = view === "network" || view === "history";
+  document.title = title + " · LanClaim";
+  document.querySelectorAll("[data-nav]").forEach((el) => {
+    el.classList.toggle("active", el.dataset.nav === view);
+    el.setAttribute("aria-current", el.dataset.nav === view ? "page" : "false");
+  });
+  if (view === "history") loadHistory().catch(showGlobalError);
+  else {
+    renderView();
+    if (view === "network" && !networks.length) discoverNetworks();
+  }
+}
+function showGlobalError(error) {
+  $("#global-error").textContent = error.message;
+  $("#global-error").hidden = false;
+}
+function tabs(items) {
+  return html`<div class="tabs" role="group" aria-label="Filtrar inventario">
+    ${items.map(([key, label]) => `<button class="tab ${filter === key ? "active" : ""}" data-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join("")}
+  </div>`;
+}
+function toolbar(items, placeholder) {
+  return `<div class="toolbar">${tabs(items)}<input class="search" id="search" type="search" value="${esc(query)}" placeholder="${placeholder}" aria-label="${placeholder}"></div>`;
+}
+function renderView() {
+  if (!state) return;
+  if (view === "ips") renderIps();
+  else if (view === "machines") renderMachines();
+  else if (view === "network") renderNetwork();
+  else renderHistory();
+}
+async function discoverNetworks() {
+  try {
+    const result = await api("networks");
+    networks = result.networks;
+    if (view !== "network") return;
+    const saved = (() => {
+      try {
+        return localStorage.getItem("lanclaim.network") || "";
+      } catch {
+        return "";
+      }
+    })();
+    if (!networkQuery)
+      networkQuery =
+        saved ||
+        (networks.length === 1 && networks[0].size <= 4096
+          ? networks[0].cidr
+          : "");
+    renderNetwork();
+    if (networkQuery && !networkAddresses.length) await listNetwork();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+function networkVisible() {
+  const claimed = new Set(state.ips.map((ip) => ip.address));
+  return networkAddresses.filter(
+    (a) =>
+      a.includes(query.trim()) &&
+      (filter === "all" ||
+        (filter === "mine" ? claimed.has(a) : !claimed.has(a))),
+  );
+}
+function renderNetwork() {
+  const claimed = new Map(state.ips.map((ip) => [ip.address, ip]));
+  networkSelected = new Set(
+    [...networkSelected].filter((a) => !claimed.has(a)),
+  );
+  const visible = networkVisible(),
+    pages = Math.max(1, Math.ceil(visible.length / 64));
+  networkPage = Math.min(networkPage, pages - 1);
+  const page = visible.slice(networkPage * 64, (networkPage + 1) * 64);
+  const selectable = page.filter((a) => !claimed.has(a));
+  $("#content").innerHTML = html`<section class="network-config panel">
+      <div class="panel-title">
+        <div>
+          <h2>Elige una red o un rango</h2>
+          <p>
+            Lista de direcciones del rango. La presencia de una IP aquí no
+            indica que esté ocupada.
+          </p>
+        </div>
+      </div>
+      <form id="network-form">
+        <label
+          >Red o rango<input
+            id="network-range"
+            name="network"
+            value="${esc(networkQuery)}"
+            placeholder="192.168.1.0/24 o 192.168.1.10-192.168.1.50"
+            required
+            maxlength="200" /></label
+        ><button class="primary" type="submit" ${networkBusy ? "disabled" : ""}>
+          ${networkBusy ? t("Cargando…") : t("Mostrar direcciones")}
+        </button>
+      </form>
+      ${networks.length ? html`<div class="network-suggestions"><span>Redes del servidor:</span>${networks.map((n) => `<button class="secondary" data-network="${esc(n.cidr)}" ${n.size > 4096 ? t('disabled title="Divide esta red en rangos de hasta 4096 IPs"') : ""}>${esc(n.cidr)} <small>${esc(n.interface)}</small></button>`).join("")}</div>` : t('<p class="help network-help">Introduce tu subred manualmente. En VM o WSL2 puede ser distinta de la red del equipo desde el que accedes.</p>')}
+      <p class="help network-help">
+        Hasta 4096 direcciones por consulta. En CIDR se incluyen también los
+        extremos de la red; verifica su uso antes de asignarlos.
+      </p>
+    </section>
+    <section class="panel">
+      <div class="panel-title">
+        <div>
+          <h2>
+            Direcciones de la red
+            <span class="count-pill">${networkAddresses.length}</span>
+          </h2>
+          <p>
+            Selecciona las que quieras administrar. Las ya reclamadas conservan
+            su estado.
+          </p>
+        </div>
+        <button
+          class="primary"
+          data-action="claim-selected"
+          ${networkSelected.size ? "" : "disabled"}
+        >
+          Reclamar seleccionadas (${networkSelected.size})
+        </button>
+      </div>
+      ${toolbar(
+        [
+          ["all", t("Todas")],
+          ["outside", t("Sin reclamar")],
+          ["mine", t("En mi espacio")],
+        ],
+        t("Buscar dirección…"),
+      )}${
+        page.length
+          ? html`<div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>
+                        <input
+                          type="checkbox"
+                          id="select-network-page"
+                          aria-label="Seleccionar IPs sin reclamar de esta página"
+                          ${selectable.length && selectable.every((a) => networkSelected.has(a)) ? "checked" : ""}
+                          ${!selectable.length ? "disabled" : ""}
+                        />
+                      </th>
+                      <th>Dirección IP</th>
+                      <th>Mi inventario</th>
+                      <th>Máquina / destino</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${page
+                      .map((address) => {
+                        const ip = claimed.get(address);
+                        return html`<tr
+                          class="${networkSelected.has(address) ? "selected-row" : ""}"
+                        >
+                          <td>
+                            <input
+                              type="checkbox"
+                              data-network-address="${esc(address)}"
+                              aria-label="Reclamar ${esc(address)}"
+                              ${ip ? "disabled checked" : networkSelected.has(address) ? "checked" : ""}
+                            />
+                          </td>
+                          <td>
+                            <span class="ip-address">${esc(address)}</span>
+                          </td>
+                          <td>
+                            ${ip ? badge(ip.status) : t('<span class="badge outside">Sin reclamar</span>')}
+                          </td>
+                          <td>
+                            ${ip?.assignment ? machineLink(ip.assignment.machine_id) : ip?.plan ? esc(ip.plan.target) : '<span class="muted">—</span>'}
+                          </td>
+                          <td>
+                            ${ip ? html`<button class="row-action" data-action="ip-detail" data-id="${ip.id}">Administrar ↗</button>` : t('<span class="subtext">Selecciona para incorporar</span>')}
+                          </td>
+                        </tr>`;
+                      })
+                      .join("")}
+                  </tbody>
+                </table>
+              </div>
+              <div class="panel-bottom">
+                <span
+                  >${visible.length} direcciones · ${networkSelected.size}
+                  seleccionadas</span
+                >
+                <div class="actions">
+                  <button
+                    class="quiet"
+                    data-action="network-prev"
+                    ${networkPage === 0 ? "disabled" : ""}
+                  >
+                    ← Anterior</button
+                  ><span>Página ${networkPage + 1} de ${pages}</span
+                  ><button
+                    class="quiet"
+                    data-action="network-next"
+                    ${networkPage + 1 >= pages ? "disabled" : ""}
+                  >
+                    Siguiente →
+                  </button>
+                </div>
+              </div>`
+          : empty(
+              networkAddresses.length
+                ? t("Sin direcciones con este filtro")
+                : t("Tu red, dirección por dirección"),
+              networkAddresses.length
+                ? t("Cambia el filtro para ver otras direcciones.")
+                : t(
+                    "Introduce una subred o elige una de las redes detectadas en el servidor para empezar.",
+                  ),
+            )
+      }
+    </section>`;
+  $("#network-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    networkQuery = $("#network-range").value.trim();
+    listNetwork().catch(showGlobalError);
+  });
+}
+async function listNetwork() {
+  if (networkBusy) return;
+  networkBusy = true;
+  renderNetwork();
+  try {
+    const result = await api("commands/preview_claim", {
+      addresses: networkQuery,
+    });
+    networkAddresses = result.addresses;
+    networkSelected.clear();
+    networkPage = 0;
+    try {
+      localStorage.setItem("lanclaim.network", networkQuery);
+    } catch {
+      /* Browser storage is optional. */
+    }
+    $("#global-error").hidden = true;
+  } catch (error) {
+    networkAddresses = [];
+    networkSelected.clear();
+    throw error;
+  } finally {
+    networkBusy = false;
+    if (view === "network") renderNetwork();
+  }
+}
+function matchingIps() {
+  return state.ips.filter((ip) => {
+    const matches =
+      filter === "all" ||
+      (filter === "assigned"
+        ? !!ip.assignment
+        : filter === "planned"
+          ? !!ip.plan
+          : filter === "reusable"
+            ? ip.reusable
+            : ip.status === filter);
+    const m = ip.assignment && machine(ip.assignment.machine_id);
+    return (
+      matches &&
+      `${ip.address} ${ip.notes} ${m?.name || ""} ${m?.tags || ""} ${ip.plan?.target || ""}`
+        .toLowerCase()
+        .includes(query.toLowerCase())
+    );
+  });
+}
+function ipRows(ips) {
+  return ips
+    .map((ip) => {
+      const m = ip.assignment && machine(ip.assignment.machine_id);
+      return html`<tr>
+        <td>
+          ${ipLink(ip.id)}<span class="subtext"
+            >IPv${ip.family}${ip.reusable ? t(" · Reutilizable") : ""}</span
+          >
+        </td>
+        <td>
+          ${badge(ip.status)}${ip.review && (ip.assignment || ip.plan) ? `<span class="subtext">${ip.assignment ? t("Asignación conservada") : t("Plan conservado")}</span>` : ""}
+        </td>
+        <td>
+          ${m ? machineLink(m.id) + `<span class="subtext">${esc(m.os || m.hostname || t("Sin sistema registrado"))}${m.lifecycle === "reinstalling" ? t(" · En reinstalación") : ""}</span>` : ip.plan ? esc(ip.plan.target) + t('<span class="subtext">Destino previsto</span>') : t('<span class="muted">Sin asignar</span>')}
+        </td>
+        <td>
+          ${
+            m?.tags
+              ? m.tags
+                  .split(",")
+                  .filter(Boolean)
+                  .slice(0, 3)
+                  .map((t) => `<span class="tag">${esc(t.trim())}</span>`)
+                  .join("")
+              : '<span class="muted">—</span>'
+          }
+        </td>
+        <td>
+          <button class="row-action" data-action="ip-detail" data-id="${ip.id}">
+            Administrar ↗
+          </button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+}
+function renderIps() {
+  const ips = matchingIps();
+  $("#content").innerHTML = html`<section class="panel">
+      <div class="panel-title">
+        <div>
+          <h2>
+            Direcciones de mi espacio
+            <span class="count-pill">${state.ips.length}</span>
+          </h2>
+          <p>
+            Reclamar una IP la incorpora a tu inventario; no la ocupa en la red.
+          </p>
+        </div>
+      </div>
+      ${toolbar(
+        [
+          ["all", t("Todas")],
+          ["available", t("Disponibles")],
+          ["assigned", t("Asignadas")],
+          ["planned", t("Planificadas")],
+          ["review", t("Por revisar")],
+          ["reusable", t("Reutilizables")],
+        ],
+        t("Buscar IP, máquina o etiqueta…"),
+      )}${
+        ips.length
+          ? html`<div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Dirección IP</th>
+                      <th>Estado</th>
+                      <th>Máquina / destino</th>
+                      <th>Etiquetas</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${ipRows(ips)}
+                  </tbody>
+                </table>
+              </div>
+              <div class="panel-bottom">
+                <span>${ips.length} direcciones en esta vista</span
+                ><span>Asignaciones e historial persistentes</span>
+              </div>`
+          : empty(
+              state.ips.length
+                ? t("Sin resultados en esta vista")
+                : t("Tu próximo proyecto empieza con una IP"),
+              state.ips.length
+                ? t("Prueba otro filtro o cambia la búsqueda.")
+                : t(
+                    "Añade una dirección o un rango. Puedes mantenerlo disponible, planificarlo o asignarlo cuando quieras.",
+                  ),
+              state.ips.length
+                ? ""
+                : t(
+                    '<button class="primary" data-action="claim">＋ Reclamar mis primeras IPs</button>',
+                  ),
+            )
+      }
+    </section>
+    <div class="insight-grid">
+      <article class="insight">
+        <span class="insight-icon" aria-hidden="true">↻</span>
+        <div>
+          <h3>${state.counts.reusable} IPs listas para una nueva etapa</h3>
+          <p>Direcciones liberadas que conservan toda su historia.</p>
+        </div>
+        <button class="row-action" data-action="reusable">Ver IPs →</button>
+      </article>
+      <article class="insight">
+        <span class="insight-icon" aria-hidden="true">▣</span>
+        <div>
+          <h3>¿Vas a formatear una máquina?</h3>
+          <p>Márcala en reinstalación y conserva sus IPs.</p>
+        </div>
+        <button class="row-action" data-action="machines">
+          Ver máquinas →
+        </button>
+      </article>
+    </div>`;
+}
+function renderMachines() {
+  const list = state.machines.filter(
+    (m) =>
+      (filter === "all" || m.lifecycle === filter) &&
+      Object.values(m).join(" ").toLowerCase().includes(query.toLowerCase()),
+  );
+  $("#content").innerHTML = html`<section class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>
+          Inventario de máquinas
+          <span class="count-pill">${state.machines.length}</span>
+        </h2>
+        <p>
+          ${state.counts.retired} retiradas · Sus direcciones e historial siguen
+          disponibles.
+        </p>
+      </div>
+    </div>
+    ${toolbar(
+      [
+        ["all", t("Todas")],
+        ["active", t("Activas")],
+        ["reinstalling", t("En reinstalación")],
+        ["retired", t("Retiradas")],
+      ],
+      t("Buscar nombre, hostname, etiqueta…"),
+    )}${
+      list.length
+        ? `<div class="machine-grid">${list
+            .map((m) => {
+              const ips = state.ips.filter(
+                (ip) => ip.assignment?.machine_id === m.id,
+              );
+              return html`<article class="machine-card">
+                <div class="machine-top">
+                  <span class="machine-icon" aria-hidden="true">▣</span
+                  >${badge(m.lifecycle)}
+                </div>
+                <h3>${machineLink(m.id)}</h3>
+                <p>${esc(m.os || t("Sistema operativo sin especificar"))}</p>
+                <p>
+                  ${esc(m.platform || t("Plataforma sin especificar"))}${m.vm_id ? " · " + esc(m.vm_id) : ""}
+                </p>
+                <div class="machine-ips">
+                  ${ips.length ? ips.map((ip) => ipLink(ip.id)).join(" ") : t('<span class="muted subtext">Sin IPs asignadas</span>')}
+                </div>
+                <div class="actions">
+                  <button
+                    class="secondary"
+                    data-action="machine-detail"
+                    data-id="${m.id}"
+                  >
+                    Administrar →
+                  </button>
+                </div>
+              </article>`;
+            })
+            .join("")}</div>`
+        : empty(
+            state.machines.length
+              ? t("Sin máquinas en esta vista")
+              : t("Dale nombre a tu infraestructura"),
+            t(
+              "Registra equipos físicos o virtuales, aunque estén apagados o todavía no tengan IP.",
+            ),
+            t(
+              '<button class="primary" data-action="create-machine">＋ Registrar máquina</button>',
+            ),
+          )
+    }
+  </section>`;
+}
+function detailText(detail) {
+  return Object.entries(detail)
+    .map(([key, value]) => {
+      if (value && typeof value === "object")
+        return `${fieldLabels[key] || key}: ${value.before || "—"} → ${value.after || "—"}`;
+      const label =
+        {
+          address: "IP",
+          machine: t("Máquina"),
+          reason: t("Motivo"),
+          target: t("Destino"),
+          previous: t("Estado anterior"),
+          record_id: t("Registro"),
+          assignment_id: t("Asignación"),
+          before: t("Anterior"),
+        }[key] ||
+        fieldLabels[key] ||
+        key;
+      return `${label}: ${value || "—"}`;
+    })
+    .join(" · ");
+}
+function timeline(rows) {
+  return `<div class="timeline">${rows.map((e) => `<article class="event"><span class="event-dot" aria-hidden="true"></span><div><strong>${esc(eventLabels[e.kind] || e.kind)}</strong><p>${esc(detailText(e.detail))}</p><div class="event-links">${e.ip_id ? ipLink(e.ip_id) : ""}${e.machine_id ? machineLink(e.machine_id) : ""}</div></div><time datetime="${esc(e.at)}">${esc(date(e.at))}</time></article>`).join("")}</div>`;
+}
+async function loadHistory(append = false) {
+  const generation = ++pageGeneration;
+  const params = new URLSearchParams(historyFilter);
+  if (append && historyRows.length) params.set("before", historyRows.at(-1).id);
+  const { events } = await api("history?" + params);
+  if (generation !== pageGeneration || view !== "history") return;
+  historyRows = append ? [...historyRows, ...events] : events;
+  historyMore = events.length === 100;
+  renderHistory();
+}
+function renderHistory() {
+  const title = historyFilter.ip_id
+    ? t("Historial de ") + ipById(Number(historyFilter.ip_id))?.address
+    : historyFilter.machine_id
+      ? t("Historial de ") + machine(Number(historyFilter.machine_id))?.name
+      : t("Actividad del inventario");
+  $("#content").innerHTML = html`<section class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>${esc(title)}</h2>
+        <p>Reclamaciones, cambios, asignaciones y ciclos de vida.</p>
+      </div>
+      ${Object.keys(historyFilter).length ? t('<button class="quiet" data-action="all-history">Ver todo</button>') : ""}
+    </div>
+    ${historyRows.length ? timeline(historyRows) : empty(t("Todavía no hay movimientos"), t("Aquí aparecerá la historia de tu inventario."))}${historyMore ? t('<button class="secondary load-more" data-action="more-history">Cargar anteriores</button>') : ""}
+  </section>`;
+}
+function openDialog(title, content) {
+  detailKey = null;
+  $("#dialog-title").textContent = title;
+  $("#dialog-body").innerHTML = content;
+  if (!$("#dialog").open) $("#dialog").showModal();
+}
+function closeDialog() {
+  if (!submitting) {
+    $("#dialog").close();
+    detailKey = null;
+  }
+}
+function field(name, label, value = "", options = {}) {
+  const { required = false, area = false, wide = false } = options;
+  return `<label class="${wide ? "wide" : ""}">${esc(label)}${required ? " *" : ""}${area ? `<textarea name="${name}" maxlength="4000" ${required ? "required" : ""}>${esc(value)}</textarea>` : `<input name="${name}" value="${esc(value)}" maxlength="200" ${required ? "required" : ""}>`}</label>`;
+}
+function form(content, submit = t("Guardar"), danger = false) {
+  return html`<form id="action-form">
+    ${content}
+    <div class="form-error" role="alert" hidden></div>
+    <div class="dialog-actions">
+      <button type="button" class="secondary" data-action="close">
+        Cancelar</button
+      ><button class="${danger ? "danger" : "primary"}" type="submit">
+        ${submit}
+      </button>
+    </div>
+  </form>`;
+}
+function bindForm(handler) {
+  $("#action-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (submitting) return;
+    const formEl = event.currentTarget;
+    const data = Object.fromEntries(new FormData(formEl));
+    submitting = true;
+    const button = $("[type=submit]", formEl);
+    button.disabled = true;
+    $(".form-error", formEl).hidden = true;
+    try {
+      await handler(data);
+    } catch (error) {
+      $(".form-error", formEl).textContent = error.message;
+      $(".form-error", formEl).hidden = false;
+    } finally {
+      submitting = false;
+      button.disabled = false;
+    }
+  });
+}
+async function mutate(action, data, message) {
+  const result = await api("commands/" + action, data);
+  $("#dialog").close();
+  detailKey = null;
+  toast(message || t("Cambio guardado."));
+  try {
+    await refresh();
+  } catch {
+    /* The write succeeded; the global banner offers a refresh. */
+  }
+  return result;
+}
+function claimForm() {
+  openDialog(
+    t("Reclamar direcciones IP"),
+    form(
+      html`<p class="help">
+          Añade IPs individuales, rangos inclusivos o redes CIDR. Máximo 4096
+          direcciones por operación. Una red CIDR incluye todas sus direcciones,
+          también los extremos.
+        </p>
+        ${field("addresses", t("Direcciones o rangos"), "", { required: true, area: true })}
+        <p class="help">
+          Ejemplos: 192.168.1.20 · 192.168.1.30-192.168.1.40 · 10.0.0.0/28<br />Separa
+          entradas con espacios, comas o saltos de línea.
+        </p>
+        <div id="claim-preview"></div>`,
+      t("Revisar direcciones"),
+    ),
+  );
+  $("textarea[name=addresses]").maxLength = 100000;
+  let reviewed = "";
+  $("textarea").addEventListener("input", () => {
+    reviewed = "";
+    $("#claim-preview").innerHTML = "";
+    $("[type=submit]", $("#action-form")).textContent = t(
+      "Revisar direcciones",
+    );
+  });
+  bindForm(async (data) => {
+    if (reviewed === data.addresses) {
+      const result = await mutate(
+        "claim",
+        data,
+        t("Direcciones incorporadas a tu espacio."),
+      );
+      toast(
+        html`${result.added} IPs nuevas · ${result.existing} ya estaban
+        reclamadas.`,
+      );
+    } else {
+      const result = await api("commands/preview_claim", data);
+      reviewed = data.addresses;
+      $("#claim-preview").innerHTML = html`<div class="notice">
+        <strong
+          >${result.added} nuevas · ${result.existing} ya reclamadas</strong
+        ><br />${result.addresses.slice(0, 20).map(esc).join(", ")}${result.addresses.length > 20 ? html` … y ${result.addresses.length - 20} más` : ""}<br />Las
+        existentes conservarán su estado e historial.
+      </div>`;
+      $("[type=submit]", $("#action-form")).textContent = t(
+        "Confirmar reclamación",
+      );
+    }
+  });
+}
+function machineForm(id) {
+  const m = id ? machine(id) : {};
+  openDialog(
+    id ? t("Editar máquina") : t("Nueva máquina"),
+    form(
+      html`<p class="help">
+          Registra su identidad una vez. Sus IPs y su historial la acompañarán
+          durante todo su ciclo de vida.
+        </p>
+        <div class="form-grid">
+          ${Object.entries(fieldLabels)
+            .map(([key, label]) =>
+              field(key, label, m[key] || "", {
+                required: key === "name",
+                area: ["description", "notes"].includes(key),
+                wide: ["description", "notes"].includes(key),
+              }),
+            )
+            .join("")}
+        </div>`,
+    ),
+  );
+  bindForm((data) =>
+    mutate(
+      id ? "edit_machine" : "create_machine",
+      { ...data, ...(id ? { id } : {}) },
+      id
+        ? t("Ficha actualizada. Las asignaciones se conservan.")
+        : t("Máquina registrada."),
+    ),
+  );
+}
+async function showIp(id) {
+  const ip = ipById(id);
+  if (!ip) return;
+  const a = ip.assignment,
+    p = ip.plan;
+  const reviews = state.reviews.filter((r) => r.ip_id === id && !r.closed_at);
+  let actions = "";
+  if (ip.status === "available")
+    actions += html`<button
+        class="primary"
+        data-action="assign"
+        data-id="${id}"
+      >
+        Asignar a máquina</button
+      ><button class="secondary" data-action="plan" data-id="${id}">
+        Planificar
+      </button>`;
+  if (a)
+    actions += html`<button
+      class="secondary"
+      data-action="release"
+      data-id="${id}"
+    >
+      Liberar asignación
+    </button>`;
+  if (p)
+    actions += html`${!ip.review ? html`<button class="primary" data-action="assign" data-id="${id}">Ejecutar plan</button>` : ""}<button
+        class="secondary"
+        data-action="cancel-plan"
+        data-id="${p.id}"
+      >
+        Cancelar plan
+      </button>`;
+  actions += html`<button
+      class="secondary"
+      data-action="review"
+      data-id="${id}"
+    >
+      Abrir revisión</button
+    ><button class="quiet" data-action="ip-notes" data-id="${id}">
+      Editar notas
+    </button>`;
+  openDialog(
+    ip.address,
+    html`${badge(ip.status)}
+      <p class="help">
+        Reclamada el ${esc(date(ip.claimed_at))}. Esta dirección permanece en tu
+        espacio al liberar su asignación.
+      </p>
+      ${a ? html`<div class="notice">Asignada a ${machineLink(a.machine_id)} desde ${esc(date(a.started_at))}.</div>` : p ? html`<div class="notice">Planificada para <strong>${esc(p.target)}</strong><br />${esc(p.notes)}</div>` : ""}${ip.notes ? `<p>${esc(ip.notes)}</p>` : ""}${reviews
+        .map(
+          (r) =>
+            html`<div class="review-item">
+              <p>${esc(r.reason)}</p>
+              <button
+                class="row-action"
+                data-action="resolve-review"
+                data-id="${r.id}"
+              >
+                Resolver revisión →
+              </button>
+            </div>`,
+        )
+        .join("")}
+      <div class="actions">${actions}</div>
+      <section class="detail-section">
+        <h3>Asignaciones de esta dirección</h3>
+        ${
+          state.assignments
+            .filter((r) => r.ip_id === id)
+            .reverse()
+            .map(
+              (r) =>
+                `<div class="assignment-line">${machineLink(r.machine_id)}<br><span class="subtext">${esc(date(r.started_at))} → ${esc(date(r.ended_at))}${r.end_reason ? " · " + esc(r.end_reason) : ""}</span></div>`,
+            )
+            .join("") ||
+          t('<p class="help">Todavía no se ha asignado a ninguna máquina.</p>')
+        }
+      </section>
+      <section class="detail-section detail-history">
+        <h3>Movimientos recientes</h3>
+        <div id="detail-events">Cargando…</div>
+        <button class="row-action" data-action="ip-history" data-id="${id}">
+          Consultar todo el historial →
+        </button>
+      </section>`,
+  );
+  detailKey = "ip:" + id;
+  await loadDetailHistory({ ip_id: id }, detailKey);
+}
+async function showMachine(id) {
+  const m = machine(id);
+  if (!m) return;
+  const ips = state.ips.filter((ip) => ip.assignment?.machine_id === id);
+  const assignments = state.assignments.filter(
+    (a) => a.machine_id === id && a.ended_at,
+  );
+  const actions = html`<button
+      class="secondary"
+      data-action="edit-machine"
+      data-id="${id}"
+    >
+      Editar ficha</button
+    >${m.lifecycle === "active" ? html`<button class="primary" data-action="reinstall" data-id="${id}">Reinstalar / formatear</button>` : m.lifecycle === "reinstalling" ? html`<button class="primary" data-action="finish_reinstall" data-id="${id}">Finalizar reinstalación</button>` : html`<button class="secondary" data-action="restore_machine" data-id="${id}">Reactivar máquina</button>`}${m.lifecycle !== "retired" ? html`<button class="danger" data-action="retire" data-id="${id}">Retirar máquina</button>` : ""}`;
+  openDialog(
+    m.name,
+    html`${badge(m.lifecycle)}${m.lifecycle === "reinstalling" ? t('<div class="notice">Las IPs siguen asignadas a esta máquina durante el formateo. Al terminar puedes editar el SO, hostname y demás datos sin perder su historia.</div>') : ""}
+      <div class="detail-section details-grid">
+        ${Object.entries(fieldLabels)
+          .filter(([k]) => k !== "name")
+          .map(
+            ([k, label]) =>
+              `<div class="detail-item"><small>${label}</small><span>${esc(m[k] || "—")}</span></div>`,
+          )
+          .join("")}
+      </div>
+      <section class="detail-section">
+        <h3>IPs actuales · ${ips.length}</h3>
+        ${ips.map((ip) => `<div class="assignment-line">${ipLink(ip.id)} ${badge(ip.status)}</div>`).join("") || t('<p class="help">Esta máquina no tiene IPs asignadas.</p>')}
+      </section>
+      <div class="actions detail-section">${actions}</div>
+      <section class="detail-section">
+        <h3>Asignaciones anteriores</h3>
+        ${
+          assignments
+            .reverse()
+            .map(
+              (a) =>
+                `<div class="assignment-line">${ipLink(a.ip_id)}<span class="subtext">${esc(date(a.started_at))} → ${esc(date(a.ended_at))} · ${esc(a.end_reason)}</span></div>`,
+            )
+            .join("") ||
+          t('<p class="help">No hay asignaciones anteriores.</p>')
+        }
+      </section>
+      <section class="detail-section detail-history">
+        <h3>Movimientos recientes</h3>
+        <div id="detail-events">Cargando…</div>
+        <button
+          class="row-action"
+          data-action="machine-history"
+          data-id="${id}"
+        >
+          Consultar todo el historial →
+        </button>
+      </section>`,
+  );
+  detailKey = "machine:" + id;
+  await loadDetailHistory({ machine_id: id }, detailKey);
+}
+async function loadDetailHistory(params, key) {
+  try {
+    const { events } = await api("history?" + new URLSearchParams(params));
+    if (detailKey === key && $("#detail-events"))
+      $("#detail-events").innerHTML = events.length
+        ? timeline(events.slice(0, 8))
+        : t('<p class="help">Sin movimientos.</p>');
+  } catch (error) {
+    if (detailKey === key && $("#detail-events"))
+      $("#detail-events").textContent = error.message;
+  }
+}
+function assignForm(id) {
+  const ip = ipById(id),
+    machines = state.machines.filter((m) => m.lifecycle === "active");
+  if (!machines.length) {
+    openDialog(
+      t("Necesitas una máquina activa"),
+      html`<p class="help">
+          Registra una máquina o finaliza su reinstalación para poder asignar
+          ${esc(ip.address)}.
+        </p>
+        <button class="primary" data-action="create-machine">
+          Registrar máquina
+        </button>`,
+    );
+    return;
+  }
+  openDialog(
+    ip.plan ? t("Ejecutar planificación") : t("Asignar ") + ip.address,
+    form(
+      html`<p class="help">
+          ${ip.plan ? html`Plan para ${esc(ip.plan.target)}. ` : ""}Esta IP
+          seguirá asignada aunque el equipo esté apagado.
+        </p>
+        <label
+          >Máquina *<select name="machine_id" required>
+            <option value="">Selecciona una máquina</option>
+            ${machines.map((m) => `<option value="${m.id}">${esc(m.name)}${m.hostname ? " · " + esc(m.hostname) : ""}</option>`).join("")}
+          </select></label
+        >${field("reason", t("Notas de la asignación"), "", { area: true })}`,
+      t("Asignar IP"),
+    ),
+  );
+  bindForm((data) =>
+    mutate(
+      "assign",
+      {
+        ...data,
+        ip_id: id,
+        machine_id: Number(data.machine_id),
+        ...(ip.plan ? { plan_id: ip.plan.id } : {}),
+      },
+      t("IP asignada."),
+    ),
+  );
+}
+function reasonForm(
+  title,
+  explanation,
+  action,
+  payload,
+  label = t("Confirmar"),
+  danger = false,
+) {
+  openDialog(
+    title,
+    form(
+      `<div class="notice ${danger ? "warning" : ""}">${explanation}</div>${field("reason", t("Motivo o detalle"), "", { required: true, area: true })}`,
+      label,
+      danger,
+    ),
+  );
+  bindForm((data) => mutate(action, { ...payload, ...data }));
+}
+async function dispatch(action, id) {
+  const ip = ipById(id);
+  switch (action) {
+    case "network-prev":
+      networkPage--;
+      renderNetwork();
+      break;
+    case "network-next":
+      networkPage++;
+      renderNetwork();
+      break;
+    case "claim-selected": {
+      const selected = [...networkSelected];
+      openDialog(
+        t("Reclamar IPs seleccionadas"),
+        form(
+          html`<div class="notice">
+              Se incorporarán <strong>${selected.length} direcciones</strong> a
+              tu espacio.<br />${selected.slice(0, 20).map(esc).join(", ")}${selected.length > 20 ? " …" : ""}
+            </div>
+            <p class="help">
+              Quedarán disponibles administrativamente. Reclamar no reserva
+              estas direcciones en el router ni comprueba si otro equipo las
+              usa.
+            </p>`,
+          t("Confirmar reclamación"),
+        ),
+      );
+      bindForm(async () => {
+        const result = await mutate("claim", { addresses: selected.join(",") });
+        networkSelected.clear();
+        if (view === "network") renderNetwork();
+        toast(html`${result.added} direcciones incorporadas a tu espacio.`);
+      });
+      break;
+    }
+    case "close":
+      closeDialog();
+      break;
+    case "claim":
+      claimForm();
+      break;
+    case "create-machine":
+      machineForm();
+      break;
+    case "edit-machine":
+      machineForm(id);
+      break;
+    case "ip-detail":
+      await showIp(id);
+      break;
+    case "machine-detail":
+      await showMachine(id);
+      break;
+    case "assign":
+      assignForm(id);
+      break;
+    case "plan":
+      openDialog(
+        t("Planificar ") + ip.address,
+        form(
+          html`<p class="help">
+              Guarda esta dirección para una máquina futura. No estará
+              disponible para otra asignación hasta ejecutar o cancelar el plan.
+            </p>
+            ${field("target", t("Máquina futura o propósito"), "", { required: true })}${field("notes", t("Notas"), "", { area: true })}`,
+          t("Planificar IP"),
+        ),
+      );
+      bindForm((data) =>
+        mutate("plan", { ...data, ip_id: id }, t("IP planificada.")),
+      );
+      break;
+    case "release":
+      reasonForm(
+        t("Liberar ") + ip.address,
+        html`Se cerrará la asignación a
+          <strong>${esc(machine(ip.assignment.machine_id)?.name)}</strong>. La
+          dirección permanecerá reclamada y conservará su
+          historial.${ip.review ? t(" Seguirá pendiente de revisión hasta resolver sus discrepancias.") : t(" Volverá a estar disponible.")}`,
+        "release",
+        { ip_id: id, assignment_id: ip.assignment.id },
+        t("Liberar asignación"),
+      );
+      break;
+    case "cancel-plan":
+      reasonForm(
+        t("Cancelar planificación"),
+        t(
+          "La IP seguirá reclamada y quedará disponible si no tiene revisiones abiertas.",
+        ),
+        "cancel_plan",
+        { id },
+        t("Cancelar planificación"),
+      );
+      break;
+    case "review":
+      reasonForm(
+        t("Revisar ") + ip.address,
+        t(
+          "La asignación o planificación existente se conservará. Documenta la posible discrepancia.",
+        ),
+        "review",
+        { ip_id: id },
+        t("Abrir revisión"),
+      );
+      break;
+    case "resolve-review":
+      reasonForm(
+        t("Resolver revisión"),
+        t(
+          "Documenta qué verificaste. Resolver esta revisión no modifica la asignación ni cancela planes.",
+        ),
+        "resolve_review",
+        { id },
+        t("Resolver revisión"),
+      );
+      break;
+    case "ip-notes":
+      openDialog(
+        t("Notas de ") + ip.address,
+        form(field("notes", t("Notas"), ip.notes, { area: true })),
+      );
+      bindForm((data) => mutate("ip_notes", { ...data, ip_id: id }));
+      break;
+    case "reinstall":
+      reasonForm(
+        t("Reinstalar / formatear"),
+        html`<strong>${esc(machine(id).name)}</strong> pasará a «En
+          reinstalación». Todas sus IPs seguirán asignadas. Esta acción registra
+          tu mantenimiento; no formatea ni apaga el equipo.`,
+        "reinstall",
+        { id },
+        t("Iniciar reinstalación"),
+      );
+      break;
+    case "finish_reinstall":
+      reasonForm(
+        t("Finalizar reinstalación"),
+        t(
+          "La máquina volverá a activa con las mismas IPs. Puedes actualizar su SO, hostname y notas con «Editar ficha».",
+        ),
+        "finish_reinstall",
+        { id },
+        t("Finalizar reinstalación"),
+      );
+      break;
+    case "restore_machine":
+      reasonForm(
+        t("Reactivar máquina"),
+        t(
+          "La ficha volverá a activa. Sus asignaciones anteriores seguirán cerradas; podrás asignarle las IPs que estén disponibles.",
+        ),
+        "restore_machine",
+        { id },
+        t("Reactivar"),
+      );
+      break;
+    case "retire": {
+      const ips = state.ips.filter((i) => i.assignment?.machine_id === id);
+      reasonForm(
+        t("Retirar ") + machine(id).name,
+        html`Se liberarán <strong>${ips.length} IPs</strong>:
+          ${ips.map((i) => esc(i.address)).join(", ") || t("ninguna")}. Se
+          conservarán la máquina, las reclamaciones y su historial. Las
+          revisiones abiertas continuarán pendientes. Si solo vas a formatear,
+          utiliza «Reinstalar / formatear» para conservar las asignaciones.`,
+        "retire",
+        {
+          id,
+          assignment_ids: ips.map((i) => i.assignment.id).sort((a, b) => a - b),
+        },
+        t("Retirar y liberar IPs"),
+        true,
+      );
+      break;
+    }
+    case "machines":
+      navigate("machines");
+      break;
+    case "reusable":
+      navigate("ips", "reusable");
+      break;
+    case "more-history":
+      await loadHistory(true);
+      break;
+    case "all-history":
+      historyFilter = {};
+      await loadHistory();
+      break;
+    case "ip-history":
+    case "machine-history":
+      closeDialog();
+      navigate("history");
+      historyFilter =
+        action === "ip-history" ? { ip_id: id } : { machine_id: id };
+      await loadHistory();
+      break;
+  }
+}
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("button");
+  if (!button || submitting) return;
+  try {
+    if (button.dataset.network) {
+      networkQuery = button.dataset.network;
+      await listNetwork();
+    } else if (button.dataset.nav) navigate(button.dataset.nav);
+    else if (button.dataset.stat)
+      navigate(
+        "ips",
+        { claimed: "all" }[button.dataset.stat] || button.dataset.stat,
+      );
+    else if (button.dataset.filter) {
+      filter = button.dataset.filter;
+      networkPage = 0;
+      renderView();
+    } else if (button.dataset.action)
+      await dispatch(button.dataset.action, Number(button.dataset.id));
+  } catch (error) {
+    toast(error.message);
+  }
+});
+document.addEventListener("input", (event) => {
+  if (event.target.id !== "search") return;
+  query = event.target.value;
+  const start = event.target.selectionStart;
+  renderView();
+  $("#search").focus();
+  try {
+    $("#search").setSelectionRange(start, start);
+  } catch {
+    /* search inputs may not expose selection */
+  }
+});
+document.addEventListener("change", (event) => {
+  if (event.target.dataset.networkAddress) {
+    if (event.target.checked)
+      networkSelected.add(event.target.dataset.networkAddress);
+    else networkSelected.delete(event.target.dataset.networkAddress);
+    renderNetwork();
+  } else if (event.target.id === "select-network-page") {
+    const claimed = new Set(state.ips.map((ip) => ip.address));
+    const page = networkVisible()
+      .slice(networkPage * 64, (networkPage + 1) * 64)
+      .filter((a) => !claimed.has(a));
+    for (const address of page) {
+      if (event.target.checked) networkSelected.add(address);
+      else networkSelected.delete(address);
+    }
+    renderNetwork();
+  }
+});
+$("#claim").addEventListener("click", claimForm);
+$("#new-machine").addEventListener("click", () => machineForm());
+$("#close-dialog").addEventListener("click", closeDialog);
+$("#dialog").addEventListener("cancel", (event) => {
+  if (submitting) event.preventDefault();
+});
+$("#refresh").addEventListener("click", () =>
+  refresh()
+    .then(() => toast(t("Inventario actualizado.")))
+    .catch(() => {}),
+);
+$(".brand").addEventListener("click", (event) => {
+  event.preventDefault();
+  if (state) navigate("ips");
+});
+refresh().catch(() => {});
