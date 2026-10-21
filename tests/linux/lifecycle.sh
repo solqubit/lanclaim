@@ -73,6 +73,24 @@ s = json.load(urllib.request.urlopen('http://127.0.0.1:8080/api/state'))
 assert s['counts']['claimed'] == 3 and s['counts']['assigned'] == 1
 assert s['machines'][0]['lifecycle'] == 'reinstalling'
 PY
+# Permanent deletion preserves claimed addresses after a real service restart.
+python3 - <<'PY'
+import json, urllib.request
+base = 'http://127.0.0.1:8080/api/'
+state = json.load(urllib.request.urlopen(base + 'state'))
+device = state['machines'][0]
+def command(action, data):
+    request = urllib.request.Request(base + 'commands/' + action, json.dumps(data).encode(),
+        {'Content-Type': 'application/json', 'X-CSRF-Token': state['csrf']})
+    return json.load(urllib.request.urlopen(request))
+command('retire', {'id': device['id'], 'reason': 'Test permanent deletion'})
+command('delete_machine', {'id': device['id'], 'created_at': device['created_at'], 'confirmation': device['name']})
+after = json.load(urllib.request.urlopen(base + 'state'))
+assert after['machines'] == []
+assert after['counts']['claimed'] == 3 and after['counts']['available'] == 3
+assert after['counts']['reusable'] == 1
+assert command('create_machine', {'name': 'New identity'})['id'] > device['id']
+PY
 if printf 'CANCELAR\n' | bash uninstall.sh --purge; then echo 'Purge cancellation failed' >&2; exit 1; fi
 test -f /var/lib/lanclaim/lanclaim.sqlite3
 printf 'PURGAR\n' | bash uninstall.sh --purge

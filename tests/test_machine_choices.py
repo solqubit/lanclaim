@@ -41,6 +41,7 @@ class MachineChoicesTests(unittest.TestCase):
         self.store.command('create_machine', {'name': 'Legacy', 'os': 'Debian', 'platform': 'KVM'})
         with self.store.transaction() as db:
             db.execute('DROP TABLE machine_choices')
+            db.execute('DROP TABLE identity_counters')
             db.execute('PRAGMA user_version=2')
         reopened = Store(self.store.path)
         self.assertEqual(reopened.snapshot()['machine_choices'], {'os': ['Debian'], 'platform': ['KVM']})

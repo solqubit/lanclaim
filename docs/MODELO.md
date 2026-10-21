@@ -67,6 +67,7 @@ Una IP es reutilizable cuando es asignable y tiene al menos una asignación hist
 | Iniciar reinstalación | Máquina activa. | Misma máquina en reinstalación; se conservan todas sus asignaciones. |
 | Finalizar reinstalación | Máquina en reinstalación. | Máquina activa con las mismas asignaciones. |
 | Reactivar máquina | Máquina retirada. | Máquina activa; sus asignaciones anteriores permanecen cerradas. |
+| Eliminar definitivamente | Máquina retirada, sin IPs activas; nombre e identidad confirmados. | Ficha eliminada; uso cerrado de IPs anonimizado; reclamaciones conservadas. |
 | Abrir revisión | IP reclamada. | Revisión abierta; vínculo o plan existente conservado. |
 | Resolver revisión | Evidencia y decisión registradas. | Revisión cerrada; se recalcula el estado a partir de los vínculos restantes. |
 | Registrar conectividad | Comprobación efectuada. | Nueva observación; ningún cambio de asignación. |

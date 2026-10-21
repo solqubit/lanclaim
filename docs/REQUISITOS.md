@@ -65,6 +65,8 @@ La acción de retirada mostrará las IP que se liberarán y permitirá registrar
 
 Retirar en LanClaim documenta una retirada de infraestructura; no elimina ni apaga la VM o el equipo real. Las máquinas retiradas no admitirán nuevas asignaciones mientras permanezcan en ese estado.
 
+Una máquina retirada y sin asignaciones activas podrá eliminarse definitivamente mediante una acción separada que exija escribir su nombre exacto. Esta excepción explícita borra su ficha y sus notas y elimina su identidad de las asignaciones cerradas y eventos relacionados. Las IPs permanecen reclamadas, conservan sus fechas de uso sin identificación del equipo eliminado y siguen siendo reutilizables. No se alteran otras máquinas, planes, revisiones, notas de IP ni copias de seguridad existentes. Las opciones guardadas de SO y plataforma permanecen como catálogo independiente.
+
 ### Reinstalar o formatear
 
 La acción «Reinstalar / formatear» conservará la ficha, el identificador interno y todas las IP asignadas. Registrará motivo y fecha, y mostrará el estado «En reinstalación». Al finalizar, el usuario podrá devolverla a activa y actualizar SO, hostname, MAC y demás datos desde la misma ficha. No se ejecutarán operaciones de formateo reales sobre el equipo.

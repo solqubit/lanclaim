@@ -1269,7 +1269,7 @@ async function showMachine(id) {
       data-id="${id}"
     >
       Editar ficha</button
-    >${m.lifecycle === "active" ? html`<button class="primary" data-action="reinstall" data-id="${id}">Reinstalar / formatear</button>` : m.lifecycle === "reinstalling" ? html`<button class="primary" data-action="finish_reinstall" data-id="${id}">Finalizar reinstalación</button>` : html`<button class="secondary" data-action="restore_machine" data-id="${id}">Reactivar máquina</button>`}${m.lifecycle !== "retired" ? html`<button class="danger" data-action="retire" data-id="${id}">Retirar máquina</button>` : ""}`;
+    >${m.lifecycle === "active" ? html`<button class="primary" data-action="reinstall" data-id="${id}">Reinstalar / formatear</button>` : m.lifecycle === "reinstalling" ? html`<button class="primary" data-action="finish_reinstall" data-id="${id}">Finalizar reinstalación</button>` : html`<button class="secondary" data-action="restore_machine" data-id="${id}">Reactivar máquina</button>`}${m.lifecycle !== "retired" ? html`<button class="danger" data-action="retire" data-id="${id}">Retirar máquina</button>` : !ips.length ? html`<button class="danger" data-action="delete-machine" data-id="${id}">Eliminar definitivamente</button>` : ""}`;
   openInspector(
     m.name,
     html`${badge(m.lifecycle)}${m.lifecycle === "reinstalling" ? t('<div class="notice">Las IPs siguen asignadas durante la reinstalación. Puedes actualizar los datos del equipo al terminar.</div>') : ""}
@@ -1504,6 +1504,47 @@ async function dispatch(action, id) {
         t("Reactivar"),
       );
       break;
+    case "delete-machine": {
+      const device = machine(id);
+      openInspector(
+        t("Eliminar definitivamente"),
+        form(
+          html`<div class="notice warning">
+              <strong>${esc(device.name)}</strong>
+              <p>
+                Se borrarán la ficha del equipo, sus datos y sus notas. Sus IPs
+                seguirán reclamadas en tu inventario.
+              </p>
+              <p>
+                Esta acción no se puede deshacer desde la aplicación. Las copias
+                de seguridad existentes no se modifican.
+              </p>
+            </div>
+            ${field("confirmation", t("Escribe el nombre del equipo para confirmar"), "", { required: true })}`,
+          t("Eliminar definitivamente"),
+          true,
+        ),
+      );
+      const input = $("input[name=confirmation]", $("#action-form")),
+        submit = $("[type=submit]", $("#action-form"));
+      submit.disabled = true;
+      input.autocomplete = "off";
+      input.addEventListener("input", () => {
+        submit.disabled = input.value.trim() !== device.name;
+      });
+      bindForm((data) =>
+        mutate(
+          "delete_machine",
+          {
+            id,
+            created_at: device.created_at,
+            confirmation: data.confirmation,
+          },
+          t("Máquina eliminada definitivamente."),
+        ),
+      );
+      break;
+    }
     case "retire": {
       const ips = state.ips.filter((i) => i.assignment?.machine_id === id);
       reasonForm(
