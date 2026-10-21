@@ -518,6 +518,54 @@ Object.assign(english, {
   "← Volver": "← Back",
   "← Volver a la lista": "← Back to list",
 });
+Object.assign(english, {
+  "Sistema operativo (SO)": "Operating system (OS)",
+  "Escribe o elige un valor guardado.":
+    "Type a new value or choose a saved one.",
+  "Notas del equipo": "Device notes",
+  "Nuevo equipo": "New device",
+  "Nombre, SO, plataforma y notas. La asignación de IP no cambia.":
+    "Name, OS, platform and notes. The IP assignment stays unchanged.",
+  "Nombre, SO, plataforma de virtualización y notas.":
+    "Name, OS, virtualization platform and notes.",
+  "Iniciar reinstalación": "Start reinstallation",
+  "Terminar reinstalación": "Finish reinstallation",
+  "Vuelve a activo y mantiene todas sus IPs.":
+    "Return to active and keep all its IPs.",
+  "Marca el equipo en mantenimiento. Sus IPs siguen asignadas.":
+    "Mark the device as under maintenance. Its IPs stay assigned.",
+  "Liberar asignación": "Release assignment",
+  "Deja esta IP sin equipo, lista para reutilizar. Sigue reclamada.":
+    "Unlink the device so this IP can be reused. It remains claimed.",
+  "Cambiar equipo asignado": "Change assigned device",
+  "Asigna esta IP a otro equipo existente o crea uno nuevo.":
+    "Assign this IP to another existing device or create a new one.",
+  "Tu espacio de direcciones IP": "Your IP address space",
+  "Buscar equipo, SO o plataforma…": "Search device, OS or platform…",
+  "Las IPs siguen asignadas durante la reinstalación. Puedes actualizar los datos del equipo al terminar.":
+    "IPs stay assigned during reinstallation. You can update device details when finished.",
+  "El equipo volverá a activo con las mismas IPs. Después puedes actualizar su SO, plataforma y notas.":
+    "The device will return to active with the same IPs. You can then update its OS, platform and notes.",
+  "Las direcciones siguen reclamadas.": "The addresses remain claimed.",
+  "conservarán la máquina y las reclamaciones.":
+    "keep the device and claimed addresses.",
+  "existentes conservarán su estado.": "existing ones will keep their state.",
+  "Sus direcciones siguen disponibles.": "Their addresses remain available.",
+  "La dirección permanecerá reclamada, sin equipo asignado.":
+    "The address will remain claimed with no device assigned.",
+  "Notas de la IP": "IP notes",
+  "Añade aquí tus notas sobre esta IP…": "Add your notes about this IP here…",
+  Descartar: "Discard",
+  "Guardar notas": "Save notes",
+  "Notas guardadas.": "Notes saved.",
+  "Otras opciones": "Other options",
+});
+Object.assign(english, { Plataforma: "Platform" });
+Object.assign(english, {
+  "Escribe un valor nuevo.": "Type a new value.",
+  "Elegir guardado": "Choose saved",
+  "Se guardará en la lista.": "It will be saved to the list.",
+});
 const translationPattern = new RegExp(
   Object.keys(english)
     .sort((a, b) => b.length - a.length)

@@ -7,14 +7,15 @@ LanClaim manages the addresses you claim. Claiming an IP adds it to your invento
 ## Features
 
 - Open **Network**, choose a server interface or enter a range, and scan for ICMP replies. Filter responding addresses and claim them directly from the table.
-- Open any IP and enter a device name to claim, register and assign in one save. Reuse an existing device, edit its details, reinstall it or replace just this IP’s assignment without leaving the IP. Optional fields stay collapsed and each action explains its effect.
-- See device/VM names prominently above their IP addresses in both Network and My IPs, and search the network list by name. Details and forms expand beneath the selected row, with stable table columns and Back, Cancel and Escape navigation. Refreshing the list preserves the open form draft. Higher-contrast dark surfaces and distinct state colors keep names, status and actions readable.
-- Use **My IPs**, **Machines** and **History** through a compact top navigation; counts stay small and machine details open on demand.
+- Open any IP and enter a device name to claim, register and assign in one save. Reuse an existing device, edit its details, reinstall it or replace just this IP’s assignment without leaving the IP. The device form contains only name, OS, virtualization platform and notes. OS and platform values can be entered manually and selected later from persistent saved lists.
+- See device/VM names prominently above their IP addresses in both Network and My IPs, and search the network list by name. Details and forms expand beneath the selected row, with stable table columns and Back, Cancel and Escape navigation. Refreshing the list preserves the open form draft. Near-black surfaces and pastel state badges keep names, status and actions readable. IP notes can be edited and saved directly below the device summary.
+- Use **My IPs** and **Machines** through a compact top navigation; counts stay small and machine details open on demand.
 - Claim individual IPv4/IPv6 addresses, ranges or complete CIDRs, with duplicate detection and a 4096-address batch limit.
 - Track available, planned, assigned and review-required addresses; filter reusable IPs.
-- Record machine names, descriptions, operating systems, hostnames, MACs, virtualization platforms, VM IDs, tags and notes.
+- Edit device names, operating systems, virtualization platforms and device notes. Schema 3 seeds saved OS/platform choices from existing devices; partial edits preserve legacy metadata.
 - Reinstall or format a machine while retaining its identity and every active IP assignment. Finish maintenance and update its details afterwards.
-- Retire a machine and release its assignments atomically, retaining the machine and full history. Reactivation does not silently restore old assignments.
+- Retire a machine and release its assignments atomically, retaining the machine and assignment records. Reactivation does not silently restore old assignments.
+- Use clear Start/Finish reinstallation, Release assignment and Change assigned device actions, with visible state transitions before confirmation. History screens and links are removed from the interface; existing stored records are retained.
 - Review discrepancies manually without losing existing assignments or plans.
 - Store inventory and audit history in SQLite, independently of the browser. There are no Python runtime package dependencies; manual scans use the operating system's `ping` executable.
 

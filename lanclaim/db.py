@@ -115,7 +115,7 @@ class Store:
         with self.connect() as db:
             db.execute('PRAGMA journal_mode=WAL')
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version > 2:
+            if version > 3:
                 raise RuntimeError('La base de datos requiere una versión más reciente de LanClaim.')
             if version == 0:
                 db.executescript('BEGIN IMMEDIATE;\n' + SCHEMA + '\nCOMMIT;')
@@ -127,6 +127,18 @@ class Store:
                         checked_at TEXT NOT NULL
                     );
                     PRAGMA user_version=2;
+                    COMMIT;""")
+
+            if version < 3:
+                db.executescript("""BEGIN IMMEDIATE;
+                    CREATE TABLE machine_choices (
+                        field TEXT NOT NULL CHECK(field IN ('os','platform')),
+                        value TEXT NOT NULL COLLATE NOCASE,
+                        PRIMARY KEY(field,value)
+                    );
+                    INSERT OR IGNORE INTO machine_choices SELECT 'os', TRIM(os) FROM machines WHERE TRIM(os) != '';
+                    INSERT OR IGNORE INTO machine_choices SELECT 'platform', TRIM(platform) FROM machines WHERE TRIM(platform) != '';
+                    PRAGMA user_version=3;
                     COMMIT;""")
 
     def observe(self, address, status):
@@ -176,6 +188,9 @@ class Store:
             db.execute('BEGIN')
             result = {table: [dict(r) for r in db.execute(f'SELECT * FROM {table} ORDER BY id')]
                       for table in ('ips', 'machines', 'assignments', 'plans', 'reviews')}
+            result['machine_choices'] = {
+                field: [r[0] for r in db.execute('SELECT value FROM machine_choices WHERE field=? ORDER BY value COLLATE NOCASE', (field,))]
+                for field in ('os', 'platform')}
         assignments = {r['ip_id']: r for r in result['assignments'] if not r['ended_at']}
         plans = {r['ip_id']: r for r in result['plans'] if r['status'] == 'open'}
         reviews = {r['ip_id'] for r in result['reviews'] if not r['closed_at']}
@@ -272,6 +287,8 @@ class Store:
             return {'addresses': batch, 'added': len(fresh), 'existing': len(batch) - len(fresh)}
 
         if action in ('create_machine', 'edit_machine'):
+            if action == 'edit_machine':
+                data = {**self.row(db, 'machines', data.get('id')), **data}
             fields = {key: string(data, key, key == 'name', 200 if key not in ('notes', 'description') else 4000)
                       for key in MACHINE_FIELDS}
             if fields['mac'] and not re.fullmatch(r'(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}', fields['mac']):
@@ -288,6 +305,9 @@ class Store:
                 changes = {k: {'before': old[k], 'after': v} for k, v in fields.items() if old[k] != v}
                 if changes:
                     self.event(db, 'machine_edited', changes, machine_id=ident)
+            for field in ('os', 'platform'):
+                if fields[field]:
+                    db.execute('INSERT OR IGNORE INTO machine_choices(field,value) VALUES(?,?)', (field, fields[field]))
             return {'id': ident}
 
         if action in ('retire', 'reinstall', 'finish_reinstall', 'restore_machine'):

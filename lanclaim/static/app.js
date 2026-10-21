@@ -17,45 +17,19 @@ const labels = {
   reinstalling: t("En reinstalación"),
   retired: t("Retirada"),
 };
-const eventLabels = {
-  claimed: t("IP reclamada"),
-  machine_created: t("Máquina registrada"),
-  machine_edited: t("Ficha actualizada"),
-  assigned: t("IP asignada"),
-  released: t("IP liberada"),
-  planned: t("IP planificada"),
-  plan_executed: t("Plan ejecutado"),
-  cancel_plan: t("Plan cancelado"),
-  review_opened: t("Revisión abierta"),
-  resolve_review: t("Revisión resuelta"),
-  retire: t("Máquina retirada"),
-  reinstall: t("Reinstalación iniciada"),
-  finish_reinstall: t("Reinstalación finalizada"),
-  restore_machine: t("Máquina reactivada"),
-  ip_edited: t("Notas actualizadas"),
-};
 const fieldLabels = {
   name: t("Nombre"),
-  description: t("Descripción"),
-  os: t("Sistema operativo"),
-  hostname: "Hostname",
-  mac: t("Dirección MAC"),
+  os: t("Sistema operativo (SO)"),
   platform: t("Plataforma de virtualización"),
-  vm_id: t("Identificador de VM"),
-  tags: t("Etiquetas"),
   notes: t("Notas"),
 };
 let state,
   view = "network",
   filter = "all",
   query = "",
-  historyRows = [],
-  historyFilter = {},
-  historyMore = false,
   toastTimer,
   submitting = false,
-  detailKey = null,
-  pageGeneration = 0;
+  detailKey = null;
 let networks = [],
   networkAddresses = [],
   networkSelected = new Set(),
@@ -123,8 +97,7 @@ async function refresh() {
     $("#nav-count").textContent = state.counts.claimed;
     $("#version").textContent = "v" + state.version;
     renderStats();
-    if (view === "history") await loadHistory();
-    else renderView();
+    renderView();
   } catch (error) {
     $("#global-error").textContent =
       error.message + t(" Comprueba el servidor y pulsa Actualizar.");
@@ -158,12 +131,9 @@ function empty(title, text, buttons = "") {
 }
 function navigate(next, nextFilter = "all") {
   closeInspector();
-  pageGeneration++;
   view = next;
   filter = nextFilter;
   query = "";
-  historyRows = [];
-  historyFilter = {};
   const titles = {
     ips: [
       t("Mi espacio de IPs"),
@@ -180,27 +150,19 @@ function navigate(next, nextFilter = "all") {
       t("Equipos, direcciones y ciclo de vida."),
       t("MÁQUINAS"),
     ],
-    history: [
-      t("Historial"),
-      t("Registro de cambios y asignaciones."),
-      t("HISTORIAL"),
-    ],
   };
   const [title, subtitle] = titles[view];
   $("#page-title").textContent = title;
   $("#page-subtitle").textContent = subtitle;
-  $("#claim").hidden = view === "history" || view === "machines";
+  $("#claim").hidden = view === "machines";
   $("#stats").hidden = view !== "ips";
   document.title = title + " · LanClaim";
   document.querySelectorAll("[data-nav]").forEach((el) => {
     el.classList.toggle("active", el.dataset.nav === view);
     el.setAttribute("aria-current", el.dataset.nav === view ? "page" : "false");
   });
-  if (view === "history") loadHistory().catch(showGlobalError);
-  else {
-    renderView();
-    if (view === "network" && !networks.length) discoverNetworks();
-  }
+  renderView();
+  if (view === "network" && !networks.length) discoverNetworks();
 }
 function showGlobalError(error) {
   $("#global-error").textContent = error.message;
@@ -219,7 +181,6 @@ function renderView() {
   if (view === "ips") renderIps();
   else if (view === "machines") renderMachines();
   else if (view === "network") renderNetwork();
-  else renderHistory();
 }
 async function discoverNetworks() {
   try {
@@ -584,20 +545,9 @@ function ipRows(ips) {
           ${badge(ip.status)}${ip.review && (ip.assignment || ip.plan) ? `<span class="subtext">${ip.assignment ? t("Asignación conservada") : t("Plan conservado")}</span>` : ""}
         </td>
         <td>
-          ${m ? esc(m.os || m.hostname || t("Sin sistema registrado")) + (m.lifecycle === "reinstalling" ? `<span class="subtext">${t("En reinstalación")}</span>` : "") : ip.plan ? t("Destino previsto") : "—"}
+          ${m ? esc(m.os || m.platform || t("Sin sistema registrado")) + (m.lifecycle === "reinstalling" ? `<span class="subtext">${badge("reinstalling")}</span>` : "") : ip.plan ? t("Destino previsto") : "—"}
         </td>
-        <td class="ip-tags-column">
-          ${
-            m?.tags
-              ? m.tags
-                  .split(",")
-                  .filter(Boolean)
-                  .slice(0, 3)
-                  .map((t) => `<span class="tag">${esc(t.trim())}</span>`)
-                  .join("")
-              : '<span class="muted">—</span>'
-          }
-        </td>
+        <td>${esc(m?.platform || "—")}</td>
         <td>
           <button class="row-action" data-action="ip-detail" data-id="${ip.id}">
             Ver IP
@@ -633,7 +583,7 @@ function renderIpsContent() {
         ["review", t("Por revisar")],
         ["reusable", t("Reutilizables")],
       ],
-      t("Buscar IP, máquina o etiqueta…"),
+      t("Buscar IP o equipo…"),
     )}${
       ips.length
         ? html`<div class="table-wrap">
@@ -643,7 +593,7 @@ function renderIpsContent() {
                     <th>Equipo / IP</th>
                     <th>Estado</th>
                     <th>Detalles</th>
-                    <th class="ip-tags-column">Etiquetas</th>
+                    <th>Plataforma</th>
                     <th>Acciones</th>
                   </tr>
                 </thead>
@@ -654,7 +604,7 @@ function renderIpsContent() {
             </div>
             <div class="panel-bottom">
               <span>${ips.length} direcciones en esta vista</span
-              ><span>Asignaciones e historial persistentes</span>
+              ><span>Tu espacio de direcciones IP</span>
             </div>`
         : empty(
             state.ips.length
@@ -691,7 +641,7 @@ function renderMachinesContent() {
           <span class="count-pill">${state.machines.length}</span>
         </h2>
         <p>
-          ${state.counts.retired} retiradas · Sus direcciones e historial siguen
+          ${state.counts.retired} retiradas · Sus direcciones siguen
           disponibles.
         </p>
       </div>
@@ -703,7 +653,7 @@ function renderMachinesContent() {
         ["reinstalling", t("En reinstalación")],
         ["retired", t("Retiradas")],
       ],
-      t("Buscar nombre, hostname, etiqueta…"),
+      t("Buscar equipo, SO o plataforma…"),
     )}${
       list.length
         ? html`<div class="table-wrap">
@@ -726,7 +676,7 @@ function renderMachinesContent() {
                     return html`<tr data-machine="${m.id}">
                       <td>
                         ${machineLink(m.id)}<small class="checked-at"
-                          >${esc(m.hostname)}</small
+                          >${esc(m.platform)}</small
                         >
                       </td>
                       <td>${esc(m.os || "—")}</td>
@@ -761,61 +711,6 @@ function renderMachinesContent() {
             ),
           )
     }
-  </section>`;
-}
-function detailText(detail) {
-  return Object.entries(detail)
-    .map(([key, value]) => {
-      if (value && typeof value === "object")
-        return `${fieldLabels[key] || key}: ${value.before || "—"} → ${value.after || "—"}`;
-      const label =
-        {
-          address: "IP",
-          machine: t("Máquina"),
-          reason: t("Motivo"),
-          target: t("Destino"),
-          previous: t("Estado anterior"),
-          record_id: t("Registro"),
-          assignment_id: t("Asignación"),
-          before: t("Anterior"),
-        }[key] ||
-        fieldLabels[key] ||
-        key;
-      return `${label}: ${value || "—"}`;
-    })
-    .join(" · ");
-}
-function timeline(rows) {
-  return `<div class="timeline">${rows.map((e) => `<article class="event"><span class="event-dot" aria-hidden="true"></span><div><strong>${esc(eventLabels[e.kind] || e.kind)}</strong><p>${esc(detailText(e.detail))}</p><div class="event-links">${e.ip_id ? ipLink(e.ip_id) : ""}${e.machine_id ? machineLink(e.machine_id) : ""}</div></div><time datetime="${esc(e.at)}">${esc(date(e.at))}</time></article>`).join("")}</div>`;
-}
-async function loadHistory(append = false) {
-  const generation = ++pageGeneration;
-  const params = new URLSearchParams(historyFilter);
-  if (append && historyRows.length) params.set("before", historyRows.at(-1).id);
-  const { events } = await api("history?" + params);
-  if (generation !== pageGeneration || view !== "history") return;
-  historyRows = append ? [...historyRows, ...events] : events;
-  historyMore = events.length === 100;
-  renderHistory();
-}
-function renderHistory() {
-  renderWithInspector(renderHistoryContent);
-}
-function renderHistoryContent() {
-  const title = historyFilter.ip_id
-    ? t("Historial de ") + ipById(Number(historyFilter.ip_id))?.address
-    : historyFilter.machine_id
-      ? t("Historial de ") + machine(Number(historyFilter.machine_id))?.name
-      : t("Actividad del inventario");
-  $("#content").innerHTML = html`<section class="panel">
-    <div class="panel-title">
-      <div>
-        <h2>${esc(title)}</h2>
-        <p>Reclamaciones, cambios, asignaciones y ciclos de vida.</p>
-      </div>
-      ${Object.keys(historyFilter).length ? t('<button class="quiet" data-action="all-history">Ver todo</button>') : ""}
-    </div>
-    ${historyRows.length ? timeline(historyRows) : empty(t("Todavía no hay movimientos"), t("Aquí aparecerá la historia de tu inventario."))}${historyMore ? t('<button class="secondary load-more" data-action="more-history">Cargar anteriores</button>') : ""}
   </section>`;
 }
 let inspectorHistory = [],
@@ -933,13 +828,6 @@ async function backInspector() {
   (previous.focus?.isConnected ? previous.focus : $("#inspector-title")).focus({
     preventScroll: true,
   });
-  if (detailKey && $("#detail-events")) {
-    const [kind, id] = detailKey.split(":");
-    await loadDetailHistory(
-      { [kind === "ip" ? "ip_id" : "machine_id"]: Number(id) },
-      detailKey,
-    );
-  }
 }
 function closeInspector(force = false) {
   if ((submitting && !force) || $("#inspector").hidden) return;
@@ -1052,7 +940,7 @@ function claimForm() {
         <strong
           >${result.added} nuevas · ${result.existing} ya reclamadas</strong
         ><br />${result.addresses.slice(0, 20).map(esc).join(", ")}${result.addresses.length > 20 ? html` … y ${result.addresses.length - 20} más` : ""}<br />Las
-        existentes conservarán su estado e historial.
+        existentes conservarán su estado.
       </div>`;
       $("[type=submit]", $("#action-form")).textContent = t(
         "Confirmar reclamación",
@@ -1060,36 +948,26 @@ function claimForm() {
     }
   });
 }
+function choiceField(key, label, value = "") {
+  const choices = state.machine_choices?.[key] || [
+    ...new Set(state.machines.map((m) => m[key]).filter(Boolean)),
+  ];
+  return `<div class="choice-field"><label>${esc(label)}<input aria-label="${esc(label)}" name="${key}" value="${esc(value)}" maxlength="200" autocomplete="off"></label><div class="choice-footer"><span class="field-hint">${t("Escribe un valor nuevo.")}</span>${choices.length ? `<details class="choice-picker"><summary>${t("Elegir guardado")}</summary><div class="choice-options">${choices.map((value) => `<button type="button" data-choice-field="${key}" data-choice-value="${esc(value)}">${esc(value)}</button>`).join("")}</div></details>` : `<span class="field-hint">${t("Se guardará en la lista.")}</span>`}</div></div>`;
+}
+function deviceFields(values = {}) {
+  return `<div class="form-grid">${field("name", t("Nombre del equipo"), values.name || "", { required: true })}${choiceField("os", fieldLabels.os, values.os || "")}${choiceField("platform", fieldLabels.platform, values.platform || "")}${field("notes", t("Notas del equipo"), values.notes || "", { area: true, wide: true })}</div>`;
+}
 function machineForm(id) {
   const m = id ? machine(id) : {};
   openInspector(
-    id ? t("Editar máquina") : t("Nueva máquina"),
-    form(
-      html`<p class="help">
-          Registra su identidad una vez. Sus IPs y su historial la acompañarán
-          durante todo su ciclo de vida.
-        </p>
-        <div class="form-grid">
-          ${Object.entries(fieldLabels)
-            .map(([key, label]) =>
-              field(key, label, m[key] || "", {
-                required: key === "name",
-                area: ["description", "notes"].includes(key),
-                wide: ["description", "notes"].includes(key),
-              }),
-            )
-            .join("")}
-        </div>`,
-    ),
+    id ? t("Editar datos del equipo") : t("Nuevo equipo"),
+    form(deviceFields(m)),
   );
   bindForm((data) =>
-    mutate(
-      id ? "edit_machine" : "create_machine",
-      { ...data, ...(id ? { id } : {}) },
-      id
-        ? t("Ficha actualizada. Las asignaciones se conservan.")
-        : t("Máquina registrada."),
-    ),
+    mutate(id ? "edit_machine" : "create_machine", {
+      ...data,
+      ...(id ? { id } : {}),
+    }),
   );
 }
 function ipAction(action, id, title, description, tone = "") {
@@ -1107,9 +985,6 @@ function ipMachineForm(address, { edit = false, replace = false } = {}) {
     (m) => m.lifecycle === "active" && m.id !== current?.id,
   );
   const values = edit ? current : {};
-  const extraFields = Object.entries(fieldLabels).filter(
-    ([key]) => !["name", "os"].includes(key),
-  );
   inspectorAnchor = { address };
   openInspector(
     current?.name ? `${current.name} · ${address}` : address,
@@ -1117,10 +992,10 @@ function ipMachineForm(address, { edit = false, replace = false } = {}) {
       html`
         <div class="ip-form-intro">
           <h3>
-            ${edit ? t("Datos del equipo") : replace ? t("Cambiar el equipo de esta IP") : t("¿Qué equipo usa esta IP?")}
+            ${edit ? t("Datos del equipo") : replace ? t("Cambiar equipo asignado") : t("¿Qué equipo usa esta IP?")}
           </h3>
           <p>
-            ${edit ? t("Actualiza su ficha. La IP y el historial se conservan.") : replace ? html`Equipo actual: <strong>${esc(current?.name)}</strong>. El cambio afecta solo a esta IP; las demás asignaciones se conservan.` : ip ? t("Escribe un nombre y guarda. El equipo se registrará aquí mismo.") : t("Al guardar, la IP quedará reclamada y vinculada al equipo. No se cambia la configuración de red del equipo.")}
+            ${edit ? t("Nombre, SO, plataforma y notas. La asignación de IP no cambia.") : replace ? html`Equipo actual: <strong>${esc(current?.name)}</strong>. El cambio afecta solo a esta IP; las demás asignaciones se conservan.` : ip ? t("Escribe un nombre y guarda. El equipo se registrará aquí mismo.") : t("Al guardar, la IP quedará reclamada y vinculada al equipo. No se cambia la configuración de red del equipo.")}
           </p>
         </div>
         ${
@@ -1135,27 +1010,18 @@ function ipMachineForm(address, { edit = false, replace = false } = {}) {
         }
         ${!ip ? html`<button type="button" class="row-action save-ip-only" data-claim-address="${esc(address)}">Guardar solo la IP, sin equipo</button>` : ""}
         <div id="ip-new-machine">
-          <div class="form-grid">
-            ${field("name", t("Nombre del equipo"), values?.name || (!replace && ip?.plan?.target) || "", { required: true })}${field("os", t("Sistema operativo"), values?.os || "")}
-          </div>
-          <details class="optional-fields">
-            <summary>Más datos del equipo (opcional)</summary>
-            <div class="form-grid">
-              ${extraFields.map(([key, label]) => field(key, label, values?.[key] || "", { area: ["description", "notes"].includes(key), wide: ["description", "notes"].includes(key) })).join("")}
-            </div>
-          </details>
+          ${deviceFields({ ...values, name: values?.name || (!replace && ip?.plan?.target) || "" })}
         </div>
         ${
           !edit && existing.length
             ? html`<label id="ip-existing-machine" hidden
                 >Equipo registrado<select name="machine_id" disabled required>
                   <option value="">Selecciona un equipo</option>
-                  ${existing.map((m) => `<option value="${m.id}">${esc(m.name)}${m.hostname ? " · " + esc(m.hostname) : ""}</option>`).join("")}
+                  ${existing.map((m) => `<option value="${m.id}">${esc(m.name)}${m.platform ? " · " + esc(m.platform) : ""}</option>`).join("")}
                 </select></label
               >`
             : ""
         }
-        ${replace ? field("reason", t("Nota del cambio (opcional)"), "") : ""}
         ${edit && state.ips.filter((i) => i.assignment?.machine_id === current?.id).length > 1 ? html`<p class="help">Este equipo tiene varias IPs. Los datos de su ficha se actualizan para todas; sus asignaciones se conservan.</p>` : ""}
       `,
       edit
@@ -1170,7 +1036,7 @@ function ipMachineForm(address, { edit = false, replace = false } = {}) {
     $("#ip-new-machine").hidden = useExisting;
     $("#ip-existing-machine").hidden = !useExisting;
     $("#ip-new-machine")
-      .querySelectorAll("input,textarea")
+      .querySelectorAll("input,textarea,select")
       .forEach((input) => (input.disabled = useExisting));
     $("#ip-existing-machine select").disabled = !useExisting;
   });
@@ -1211,7 +1077,7 @@ async function showIp(id) {
         "edit-ip-machine",
         id,
         t("Editar datos del equipo"),
-        t("Nombre, sistema operativo y otros datos de este equipo."),
+        t("Nombre, SO, plataforma de virtualización y notas."),
       ),
     );
     mainActions.push(
@@ -1219,21 +1085,11 @@ async function showIp(id) {
         m.lifecycle === "reinstalling" ? "finish_reinstall" : "reinstall",
         m.id,
         m.lifecycle === "reinstalling"
-          ? t("Ya terminé de formatear")
-          : t("Voy a formatear este equipo"),
+          ? t("Terminar reinstalación")
+          : t("Iniciar reinstalación"),
         m.lifecycle === "reinstalling"
-          ? t("Vuelve a activo conservando sus IPs y su historial.")
-          : t(
-              "Conserva esta IP y las demás del equipo durante la reinstalación.",
-            ),
-      ),
-    );
-    mainActions.push(
-      ipAction(
-        "release",
-        id,
-        t("Dejar esta IP disponible"),
-        t("Desvincula el equipo de esta IP. La dirección sigue siendo tuya."),
+          ? t("Vuelve a activo y mantiene todas sus IPs.")
+          : t("Marca el equipo en mantenimiento. Sus IPs siguen asignadas."),
       ),
     );
     if (!ip.review)
@@ -1241,10 +1097,18 @@ async function showIp(id) {
         ipAction(
           "replace-ip-machine",
           id,
-          t("Esta IP ahora es de otro equipo"),
-          t("Guarda el equipo anterior en el historial y asigna el nuevo."),
+          t("Cambiar equipo asignado"),
+          t("Asigna esta IP a otro equipo existente o crea uno nuevo."),
         ),
       );
+    mainActions.push(
+      ipAction(
+        "release",
+        id,
+        t("Liberar asignación"),
+        t("Deja esta IP sin equipo, lista para reutilizar. Sigue reclamada."),
+      ),
+    );
   } else if (!ip.review) {
     mainActions.push(
       ipAction(
@@ -1276,7 +1140,6 @@ async function showIp(id) {
         ),
       ),
     );
-  const history = state.assignments.filter((r) => r.ip_id === id).reverse();
   inspectorAnchor = { address: ip.address };
   openInspector(
     m?.name ? `${m.name} · ${ip.address}` : ip.address,
@@ -1290,10 +1153,24 @@ async function showIp(id) {
         >
         <h3>${esc(m?.name || p?.target || t("Sin equipo asignado"))}</h3>
         <p>
-          ${esc(m ? [m.os, m.hostname].filter(Boolean).join(" · ") || t("Puedes completar sus datos cuando quieras.") : p?.notes || t("Puedes usarla ahora o guardarla para después."))}
+          ${esc(m ? [m.os, m.platform].filter(Boolean).join(" · ") || t("Puedes completar sus datos cuando quieras.") : p?.notes || t("Puedes usarla ahora o guardarla para después."))}
         </p>
         ${observations.has(ip.address) ? `<div class="ip-connectivity">${observationCell(ip.address)}</div>` : ""}
-        ${ip.notes ? `<p>${esc(ip.notes)}</p>` : ""}
+        <form id="ip-notes-form" class="ip-notes-card">
+          <label for="ip-notes-text">Notas de la IP</label>
+          <textarea
+            id="ip-notes-text"
+            name="notes"
+            maxlength="4000"
+            placeholder="Añade aquí tus notas sobre esta IP…"
+          >
+${esc(ip.notes)}</textarea>
+          <div class="form-error" role="alert" hidden></div>
+          <div class="notes-actions">
+            <button type="reset" class="quiet">Descartar</button
+            ><button type="submit" class="secondary">Guardar notas</button>
+          </div>
+        </form>
       </div>
       ${reviews
         .map(
@@ -1312,21 +1189,10 @@ async function showIp(id) {
         .join("")}
       <div class="ip-actions">${mainActions.join("")}</div>
       <details class="ip-more">
-        <summary>Notas y otras opciones</summary>
+        <summary>Otras opciones</summary>
         <div class="ip-actions">
-          ${ipAction("ip-notes", id, t("Notas de esta IP"), t("Guarda información útil sobre esta dirección."))}
           ${ipAction("review", id, t("Hay un problema con esta IP"), t("Anota un posible conflicto para revisarlo sin perder la asignación."))}
-          ${m ? ipAction("retire", m.id, t("Ya no uso este equipo"), html`Retira el equipo y libera sus ${currentIps.length} IPs. Se conservan las direcciones y el historial.`, "destructive") : ""}
-        </div>
-      </details>
-      <details class="ip-more">
-        <summary>Historial de esta IP</summary>
-        <div class="detail-section">
-          ${history.map((r) => `<div class="assignment-line"><strong>${esc(machine(r.machine_id)?.name)}</strong><span class="subtext">${esc(date(r.started_at))} → ${esc(date(r.ended_at))}${r.end_reason ? " · " + esc(r.end_reason) : ""}</span></div>`).join("") || html`<p class="help">Todavía no se ha asignado a ninguna máquina.</p>`}
-          <div id="detail-events">Cargando…</div>
-          <button class="row-action" data-action="ip-history" data-id="${id}">
-            Consultar todo el historial →
-          </button>
+          ${m ? ipAction("retire", m.id, t("Ya no uso este equipo"), html`Retira el equipo y libera sus ${currentIps.length} IPs. Las direcciones siguen reclamadas.`, "destructive") : ""}
         </div>
       </details>
       <p class="ip-footnote">
@@ -1336,16 +1202,36 @@ async function showIp(id) {
     { root: true },
   );
   detailKey = "ip:" + id;
-  await loadDetailHistory({ ip_id: id }, detailKey);
+  const notesForm = $("#ip-notes-form");
+  notesForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (submitting) return;
+    submitting = true;
+    const button = $("[type=submit]", notesForm),
+      errorBox = $(".form-error", notesForm),
+      input = $("textarea", notesForm);
+    button.disabled = true;
+    errorBox.hidden = true;
+    try {
+      await api("commands/ip_notes", { ip_id: id, notes: input.value });
+      ipById(id).notes = input.value.trim();
+      input.defaultValue = ipById(id).notes;
+      input.value = ipById(id).notes;
+      toast(t("Notas guardadas."));
+    } catch (error) {
+      errorBox.textContent = error.message;
+      errorBox.hidden = false;
+    } finally {
+      submitting = false;
+      button.disabled = false;
+    }
+  });
 }
 async function showMachine(id) {
   inspectorAnchor = { machine: String(id) };
   const m = machine(id);
   if (!m) return;
   const ips = state.ips.filter((ip) => ip.assignment?.machine_id === id);
-  const assignments = state.assignments.filter(
-    (a) => a.machine_id === id && a.ended_at,
-  );
   const actions = html`<button
       class="secondary"
       data-action="edit-machine"
@@ -1355,7 +1241,7 @@ async function showMachine(id) {
     >${m.lifecycle === "active" ? html`<button class="primary" data-action="reinstall" data-id="${id}">Reinstalar / formatear</button>` : m.lifecycle === "reinstalling" ? html`<button class="primary" data-action="finish_reinstall" data-id="${id}">Finalizar reinstalación</button>` : html`<button class="secondary" data-action="restore_machine" data-id="${id}">Reactivar máquina</button>`}${m.lifecycle !== "retired" ? html`<button class="danger" data-action="retire" data-id="${id}">Retirar máquina</button>` : ""}`;
   openInspector(
     m.name,
-    html`${badge(m.lifecycle)}${m.lifecycle === "reinstalling" ? t('<div class="notice">Las IPs siguen asignadas a esta máquina durante el formateo. Al terminar puedes editar el SO, hostname y demás datos sin perder su historia.</div>') : ""}
+    html`${badge(m.lifecycle)}${m.lifecycle === "reinstalling" ? t('<div class="notice">Las IPs siguen asignadas durante la reinstalación. Puedes actualizar los datos del equipo al terminar.</div>') : ""}
       <div class="detail-section details-grid">
         ${Object.entries(fieldLabels)
           .filter(([k]) => k !== "name")
@@ -1369,49 +1255,28 @@ async function showMachine(id) {
         <h3>IPs actuales · ${ips.length}</h3>
         ${ips.map((ip) => `<div class="assignment-line">${ipLink(ip.id)} ${badge(ip.status)}</div>`).join("") || t('<p class="help">Esta máquina no tiene IPs asignadas.</p>')}
       </section>
-      <div class="actions detail-section">${actions}</div>
-      <section class="detail-section">
-        <h3>Asignaciones anteriores</h3>
-        ${
-          assignments
-            .reverse()
-            .map(
-              (a) =>
-                `<div class="assignment-line">${ipLink(a.ip_id)}<span class="subtext">${esc(date(a.started_at))} → ${esc(date(a.ended_at))} · ${esc(a.end_reason)}</span></div>`,
-            )
-            .join("") ||
-          t('<p class="help">No hay asignaciones anteriores.</p>')
-        }
-      </section>
-      <section class="detail-section detail-history">
-        <h3>Movimientos recientes</h3>
-        <div id="detail-events">Cargando…</div>
-        <button
-          class="row-action"
-          data-action="machine-history"
-          data-id="${id}"
-        >
-          Consultar todo el historial →
-        </button>
-      </section>`,
+      <div class="actions detail-section">${actions}</div> `,
   );
   detailKey = "machine:" + id;
-  await loadDetailHistory({ machine_id: id }, detailKey);
-}
-async function loadDetailHistory(params, key) {
-  try {
-    const { events } = await api("history?" + new URLSearchParams(params));
-    if (detailKey === key && $("#detail-events"))
-      $("#detail-events").innerHTML = events.length
-        ? timeline(events.slice(0, 8))
-        : t('<p class="help">Sin movimientos.</p>');
-  } catch (error) {
-    if (detailKey === key && $("#detail-events"))
-      $("#detail-events").textContent = error.message;
-  }
 }
 function assignForm(id) {
   ipMachineForm(ipById(id).address);
+}
+function stateTransition(action, payload) {
+  const transitions = {
+    reinstall: ["active", "reinstalling"],
+    finish_reinstall: ["reinstalling", "active"],
+    release: [
+      "assigned",
+      ipById(payload.ip_id)?.review ? "review" : "available",
+    ],
+    retire: [machine(payload.id)?.lifecycle || "active", "retired"],
+    restore_machine: ["retired", "active"],
+  };
+  const states = transitions[action];
+  return states
+    ? `<div class="state-transition">${badge(states[0])}<span aria-hidden="true">→</span>${badge(states[1])}</div>`
+    : "";
 }
 function reasonForm(
   title,
@@ -1428,7 +1293,7 @@ function reasonForm(
   openInspector(
     title,
     form(
-      `<div class="notice ${danger ? "warning" : ""}">${explanation}</div>${field("reason", requiresDetails ? t("Motivo o detalle") : t("Nota (opcional)"), "", { required: requiresDetails, area: true })}`,
+      `${stateTransition(action, payload)}<div class="notice ${danger ? "warning" : ""}">${explanation}</div>${field("reason", requiresDetails ? t("Motivo o detalle") : t("Nota (opcional)"), "", { required: requiresDetails, area: true })}`,
       label,
       danger,
     ),
@@ -1535,11 +1400,11 @@ async function dispatch(action, id) {
         t("Dejar disponible: ") + ip.address,
         html`Se cerrará la asignación a
           <strong>${esc(machine(ip.assignment.machine_id)?.name)}</strong>. La
-          dirección permanecerá reclamada y conservará su
-          historial.${ip.review ? t(" Seguirá pendiente de revisión hasta resolver sus discrepancias.") : t(" Volverá a estar disponible.")}`,
+          dirección permanecerá reclamada, sin equipo
+          asignado.${ip.review ? t(" Seguirá pendiente de revisión hasta resolver sus discrepancias.") : t(" Volverá a estar disponible.")}`,
         "release",
         { ip_id: id, assignment_id: ip.assignment.id },
-        t("Dejar esta IP disponible"),
+        t("Liberar asignación"),
       );
       break;
     case "cancel-plan":
@@ -1575,19 +1440,9 @@ async function dispatch(action, id) {
         t("Resolver revisión"),
       );
       break;
-    case "ip-notes":
-      openInspector(
-        t("Notas de ") + ip.address,
-        form(field("notes", t("Notas"), ip.notes, { area: true })),
-      );
-      bindForm(async (data) => {
-        await mutate("ip_notes", { ...data, ip_id: id });
-        await showIp(id);
-      });
-      break;
     case "reinstall":
       reasonForm(
-        t("Voy a formatear este equipo"),
+        t("Iniciar reinstalación"),
         html`<strong>${esc(machine(id).name)}</strong> pasará a «En
           reinstalación». Todas sus IPs seguirán asignadas. Esta acción registra
           tu mantenimiento; no formatea ni apaga el equipo.`,
@@ -1598,9 +1453,9 @@ async function dispatch(action, id) {
       break;
     case "finish_reinstall":
       reasonForm(
-        t("Ya terminé de formatear"),
+        t("Terminar reinstalación"),
         t(
-          "La máquina volverá a activa con las mismas IPs. Puedes actualizar su SO, hostname y notas con «Editar ficha».",
+          "El equipo volverá a activo con las mismas IPs. Después puedes actualizar su SO, plataforma y notas.",
         ),
         "finish_reinstall",
         { id },
@@ -1624,9 +1479,9 @@ async function dispatch(action, id) {
         t("Retirar ") + machine(id).name,
         html`Se liberarán <strong>${ips.length} IPs</strong>:
           ${ips.map((i) => esc(i.address)).join(", ") || t("ninguna")}. Se
-          conservarán la máquina, las reclamaciones y su historial. Las
-          revisiones abiertas continuarán pendientes. Si solo vas a formatear,
-          utiliza «Reinstalar / formatear» para conservar las asignaciones.`,
+          conservarán la máquina y las reclamaciones. Las revisiones abiertas
+          continuarán pendientes. Si solo vas a formatear, utiliza «Reinstalar /
+          formatear» para conservar las asignaciones.`,
         "retire",
         {
           id,
@@ -1642,21 +1497,6 @@ async function dispatch(action, id) {
       break;
     case "reusable":
       navigate("ips", "reusable");
-      break;
-    case "more-history":
-      await loadHistory(true);
-      break;
-    case "all-history":
-      historyFilter = {};
-      await loadHistory();
-      break;
-    case "ip-history":
-    case "machine-history":
-      closeInspector();
-      navigate("history");
-      historyFilter =
-        action === "ip-history" ? { ip_id: id } : { machine_id: id };
-      await loadHistory();
       break;
   }
 }
@@ -1677,7 +1517,15 @@ document.addEventListener("click", async (event) => {
         ].includes(button.dataset.action))
     )
       closeInspector();
-    if (button.dataset.openAddress) {
+    if (button.dataset.choiceField) {
+      const input = $(
+        `[name="${button.dataset.choiceField}"]`,
+        $("#action-form"),
+      );
+      input.value = button.dataset.choiceValue;
+      button.closest("details").open = false;
+      input.focus();
+    } else if (button.dataset.openAddress) {
       await openAddress(button.dataset.openAddress);
     } else if (button.dataset.claimAddress) {
       networkSelected = new Set([button.dataset.claimAddress]);
