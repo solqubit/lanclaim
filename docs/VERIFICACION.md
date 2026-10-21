@@ -12,6 +12,8 @@
 
 - Tema casi negro con estados pastel: verificados los cuatro campos del equipo, entrada manual de SO/plataforma, selección mediante «Elegir guardado», guardado de notas de IP en la ficha, cambio a un equipo existente y creación de uno nuevo. Se retiraron de la interfaz las vistas/enlaces de historial y sus referencias; los registros existentes en almacenamiento no se borran. Verificados textos ES/EN y confirmaciones de cambio de estado.
 
+La recarga del navegador se verificó con una IP abierta y búsqueda/filtro activos, una máquina bajo el filtro de reinstalación y un cambio de inglés a español. En Red, se conservan el rango, el filtro «Sin reclamar», la segunda página y el desplazamiento (4062 px en la prueba). La ficha LMS también permaneció abierta al recargar la instancia principal, sin modificar sus datos. Esta restauración guarda la ubicación por pestaña; no recupera borradores ni confirmaciones pendientes.
+
 ## Límites de la verificación
 
 El adaptador de servicio del contenedor no reproduce systemd ni sus restricciones. Falta validar instalación completa, reinicio automático y desinstalación con systemd real en VM/WSL2 y certificar otras distribuciones. Las ramas de apt/dnf/zypper/pacman son mecanismos de instalación previstos, no una lista de distribuciones certificadas.

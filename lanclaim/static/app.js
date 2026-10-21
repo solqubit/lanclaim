@@ -162,7 +162,7 @@ function navigate(next, nextFilter = "all") {
     el.setAttribute("aria-current", el.dataset.nav === view ? "page" : "false");
   });
   renderView();
-  if (view === "network" && !networks.length) discoverNetworks();
+  if (view === "network" && !networks.length) return discoverNetworks();
 }
 function showGlobalError(error) {
   $("#global-error").textContent = error.message;
@@ -1611,9 +1611,94 @@ $(".brand").addEventListener("click", (event) => {
   event.preventDefault();
   if (state && !submitting) navigate("network");
 });
-refresh()
-  .then(() => {
-    navigate("network");
-    return pollScan();
-  })
-  .catch(() => {});
+const locationStorageKey = "lanclaim.location.v1";
+let locationReady = false;
+
+function readLocation() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(locationStorageKey));
+    const filters = {
+      network: ["all", "responding", "mine", "outside"],
+      ips: ["all", "available", "assigned", "planned", "review", "reusable"],
+      machines: ["all", "active", "reinstalling", "retired"],
+    };
+    if (!saved || !Object.hasOwn(filters, saved.view)) return null;
+    const boundedText = (value, limit) =>
+      typeof value === "string" ? value.slice(0, limit) : "";
+    const boundedNumber = (value, limit) =>
+      Number.isFinite(value)
+        ? Math.max(0, Math.min(limit, Math.floor(value)))
+        : 0;
+    return {
+      view: saved.view,
+      filter: filters[saved.view].includes(saved.filter) ? saved.filter : "all",
+      query: boundedText(saved.query, 1000),
+      networkQuery: boundedText(saved.networkQuery, 100000),
+      networkPage: boundedNumber(saved.networkPage, 63),
+      address: boundedText(saved.address, 45),
+      machine: boundedNumber(saved.machine, Number.MAX_SAFE_INTEGER),
+      scroll: boundedNumber(saved.scroll, 10000000),
+    };
+  } catch {
+    // Invalid or disabled browser storage must not prevent opening the inventory.
+    return null;
+  }
+}
+
+function saveLocation() {
+  if (!locationReady) return;
+  try {
+    // Per-tab navigation only: do not store forms or replay pending commands.
+    sessionStorage.setItem(
+      locationStorageKey,
+      JSON.stringify({
+        view,
+        filter,
+        query,
+        networkQuery,
+        networkPage,
+        address: inspectorAnchor?.address,
+        machine: Number(inspectorAnchor?.machine) || 0,
+        scroll: window.scrollY,
+      }),
+    );
+  } catch {
+    /* Browser storage is optional. */
+  }
+}
+
+async function startWorkspace() {
+  const saved = readLocation();
+  if (saved) networkQuery = saved.networkQuery;
+  await refresh();
+  // Await range enumeration before restoring pagination: listing resets its page.
+  await navigate(saved?.view || "network", saved?.filter || "all");
+  if (saved) query = saved.query;
+  await pollScan();
+  if (saved) {
+    // Connectivity filters need observations before their page can be clamped.
+    networkPage = saved.networkPage;
+    renderView();
+  }
+  if (saved?.address) {
+    const ip = state.ips.find((item) => item.address === saved.address);
+    if (ip) await showIp(ip.id);
+    else if (view === "network" && networkAddresses.includes(saved.address))
+      await openAddress(saved.address);
+  } else if (saved?.machine && machine(saved.machine)) {
+    await showMachine(saved.machine);
+  }
+  if (saved) {
+    // Let the restored table and expanded row lay out before positioning the page.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    window.scrollTo({ top: saved.scroll, behavior: "instant" });
+  }
+  locationReady = true;
+}
+
+if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+window.addEventListener("pagehide", saveLocation);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") saveLocation();
+});
+startWorkspace().catch(() => {});
