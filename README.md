@@ -45,6 +45,8 @@ sudo ./install.sh
 
 The service listens on port 8080 and prints candidate access URLs. Use `sudo env LANCLAIM_PORT=8090 ./install.sh` for a different initial port. No firewall rules are changed.
 
+The service runs as `lanclaim` with `NoNewPrivileges` and only `CAP_NET_RAW`, so ping also works when Linux restricts unprivileged ICMP sockets. Existing installations receive the permission fix through `update.sh`; global ping permissions and kernel network settings are unchanged.
+
 This release is a single-user tool without application authentication, intended for a trusted private network. For other access, use an authenticated HTTPS reverse proxy or VPN. Configure `LANCLAIM_ALLOWED_HOSTS` when using a custom hostname; see the [operations guide](docs/OPERACION.md).
 
 ```bash

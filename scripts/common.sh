@@ -96,6 +96,9 @@ Restart=on-failure
 RestartSec=3
 UMask=0077
 NoNewPrivileges=true
+# ICMP must also work when ping_group_range excludes the service group.
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true

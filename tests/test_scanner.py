@@ -102,6 +102,7 @@ class ScanTests(unittest.TestCase):
             self.assertEqual(ping('127.0.0.1'), 'responding')
             self.assertEqual(run.call_args.args[0][-1], '127.0.0.1')
             self.assertNotIn('shell', run.call_args.kwargs)
+            self.assertEqual(run.call_args.kwargs['env']['LC_ALL'], 'C')
             run.return_value.returncode = 1
             self.assertEqual(ping('127.0.0.1'), 'no_response')
             run.return_value.returncode = 2
@@ -112,6 +113,7 @@ class ScanTests(unittest.TestCase):
             self.assertEqual(ping('127.0.0.1'), 'no_response')
             run.return_value.stdout = b'Reply from 127.0.0.1: bytes=32 time<1ms TTL=128'
             self.assertEqual(ping('127.0.0.1'), 'responding')
+            self.assertIsNone(run.call_args.kwargs['env'])
         with self.assertRaises(ValueError):
             ping('127.0.0.1 & other-command')
 
@@ -123,5 +125,32 @@ class ScanTests(unittest.TestCase):
     @patch('lanclaim.scanner.shutil.which', return_value='ping')
     @patch('lanclaim.scanner.subprocess.run', side_effect=subprocess.TimeoutExpired('ping', 4))
     def test_process_timeout_is_explicit(self, run, which):
-        with self.assertRaises(Invalid):
+        with self.assertRaisesRegex(Invalid, 'Ping no terminó a tiempo'):
             ping('127.0.0.1')
+
+    @patch('lanclaim.scanner.shutil.which', return_value='/usr/bin/ping')
+    @patch('lanclaim.scanner.sys.platform', 'linux')
+    @patch('lanclaim.scanner.subprocess.run')
+    def test_permission_errors_are_actionable_and_preserve_observations(self, run, which):
+        self.store.observe('127.0.0.1', 'responding')
+        before = self.store.observations()
+        for failure in (PermissionError('denied'),
+                        subprocess.CompletedProcess([], 2, b'', b'ping: socket: Operation not permitted'),
+                        subprocess.CompletedProcess([], 2, b'', b'ping: missing cap_net_raw+p capability')):
+            with self.subTest(failure=failure):
+                run.side_effect = failure if isinstance(failure, Exception) else None
+                run.return_value = failure
+                self.scanner.start('127.0.0.1')
+                result = self.finish()
+                self.assertEqual(result['scan']['status'], 'failed')
+                self.assertIn('Actualiza LanClaim', result['scan']['error'])
+                self.assertEqual(result['scan']['completed'], 0)
+                self.assertEqual(result['observations'], before)
+
+    @patch('lanclaim.scanner.shutil.which', return_value='/usr/bin/ping')
+    @patch('lanclaim.scanner.sys.platform', 'linux')
+    @patch('lanclaim.scanner.subprocess.run')
+    def test_missing_route_is_distinct_from_no_response(self, run, which):
+        run.return_value = subprocess.CompletedProcess([], 2, b'', b'ping: connect: Network is unreachable')
+        with self.assertRaisesRegex(Invalid, 'no tiene una ruta'):
+            ping('192.0.2.1')

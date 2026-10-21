@@ -404,6 +404,12 @@ Object.assign(english, {
     "Ping was not found. Install iputils-ping or iputils on the server.",
   "No se pudo ejecutar ping. Revisa los permisos y la red del servidor.":
     "Could not run ping. Check server permissions and networking.",
+  "El servicio no tiene permisos para usar ping. Actualiza LanClaim para reparar los permisos del servicio.":
+    "The service does not have permission to use ping. Update LanClaim to repair service permissions.",
+  "Ping no terminó a tiempo. Revisa la carga y la red del servidor.":
+    "Ping did not finish in time. Check server load and networking.",
+  "El servidor no tiene una ruta hacia esa red. Revisa su interfaz, gateway o red virtual.":
+    "The server has no route to that network. Check its interface, gateway or virtual network.",
   "Ya hay un escaneo en curso.": "A scan is already running.",
   "No se pudo guardar el resultado del escaneo.":
     "Could not save the scan result.",

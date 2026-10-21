@@ -18,6 +18,13 @@ command('assign', {'ip_id': 1, 'machine_id': machine['id']})
 command('reinstall', {'id': machine['id'], 'reason': 'Testing preservation'})
 # Probe only loopback, using the real ping binary as the service user.
 import time
+from pathlib import Path
+pid = Path('/tmp/lanclaim-test.pid').read_text().strip()
+process = dict(line.split(':', 1) for line in Path(f'/proc/{pid}/status').read_text().splitlines() if ':' in line)
+assert int(process['Uid'].split()[0]) != 0
+assert int(process['NoNewPrivs']) == 1
+assert int(process['CapEff'], 16) == 0x2000  # Only CAP_NET_RAW.
+assert int(process['CapBnd'], 16) == 0x2000
 request = urllib.request.Request(base + 'scans/start', json.dumps({'addresses': '127.0.0.1'}).encode(),
     {'Content-Type': 'application/json', 'X-CSRF-Token': state['csrf']})
 json.load(urllib.request.urlopen(request))
@@ -29,6 +36,8 @@ for _ in range(30):
 assert result['scan']['status'] == 'completed', result
 assert result['observations'][0]['status'] == 'responding', result
 PY
+# An update must repair existing installations whose unit predates ICMP grants.
+sed -i '/^CapabilityBoundingSet=/d; /^AmbientCapabilities=/d' /etc/systemd/system/lanclaim.service
 bash update.sh
 python3 - <<'PY'
 from lanclaim.db import Store
