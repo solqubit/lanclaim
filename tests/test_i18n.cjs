@@ -54,6 +54,9 @@ assert.equal(vm.runInContext("t('Direcciones IP')", en), "IP addresses");
 assert.equal(vm.runInContext("t('Ya hay un escaneo en curso.')", en), "A scan is already running.");
 
 assert.equal(vm.runInContext("t('Guardar IP y equipo')", en), "Save IP and device");
+assert.equal(vm.runInContext("t('Reclamar IP')", en), "Claim IP");
+assert.equal(vm.runInContext("t('Reclamar sin equipo')", en), "Claim without a device");
+assert.equal(vm.runInContext("t('Reclamar y añadir equipo')", en), "Claim and add device");
 assert.equal(
   vm.runInContext("t('El servicio no tiene permisos para usar ping. Actualiza LanClaim para reparar los permisos del servicio.')", en),
   "The service does not have permission to use ping. Update LanClaim to repair service permissions.",

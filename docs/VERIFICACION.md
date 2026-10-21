@@ -18,6 +18,8 @@ Las etiquetas de estado y conectividad usan ahora fondos oscuros teñidos, borde
 
 Se reprodujo el fallo de ping en un proceso Python sin privilegios con `NoNewPrivileges` y `net.ipv4.ping_group_range=1 0`. Con únicamente `CAP_NET_RAW`, la comprobación de loopback responde. El ciclo de vida completo pasó tanto con el rango ICMP normal como restringido; la cuenta del servidor mantiene UID no root, NoNewPrivileges y solo CAP_NET_RAW en los conjuntos efectivo y límite. Se verificó además una unidad transitoria de systemd real en WSL2 con esas restricciones y ping a loopback; esta comprobación no certifica el despliegue completo del servicio. Los mensajes ES/EN distinguen permisos, falta de ruta y tiempo del proceso agotado.
 
+Reclamación visible por IP: verificados en un inventario aislado el botón «Reclamar IP» de cada fila, la reclamación sin crear máquina, la alternativa «Reclamar sin equipo» incluso tras validar un nombre vacío, la reclamación con alta de equipo y la selección por lotes. La primera vista de una dirección sin reclamar no contiene campos obligatorios. Comprobados textos ES/EN; en el inventario real solo se abrió la vista previa, sin reclamar ni modificar direcciones.
+
 ## Límites de la verificación
 
 El adaptador de servicio del contenedor no reproduce systemd ni sus restricciones. Falta validar instalación completa, reinicio automático y desinstalación con systemd real en VM/WSL2 y certificar otras distribuciones. Las ramas de apt/dnf/zypper/pacman son mecanismos de instalación previstos, no una lista de distribuciones certificadas.

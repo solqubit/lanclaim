@@ -417,6 +417,16 @@ Object.assign(english, {
 Object.assign(english, {
   "Ver IP": "Open IP",
   "Añadir equipo": "Add device",
+  "Reclamar IP": "Claim IP",
+  "Reclamar esta IP": "Claim this IP",
+  "Se añadirá a Mis IPs como disponible. Puedes asignarle un equipo más adelante.":
+    "It will be added to My IPs as available. You can assign a device later.",
+  "Reclamar y añadir equipo": "Claim and add device",
+  "Reclamar sin equipo": "Claim without a device",
+  "Reclamar no reserva la dirección en el router ni cambia su uso en la red.":
+    "Claiming does not reserve the address on the router or change its use on the network.",
+  "IP reclamada. Ya está disponible en Mis IPs.":
+    "IP claimed. It is now available in My IPs.",
   "Datos del equipo": "Device details",
   "Cambiar el equipo de esta IP": "Change the device using this IP",
   "¿Qué equipo usa esta IP?": "Which device uses this IP?",
