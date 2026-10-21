@@ -326,6 +326,9 @@ async function pollScan() {
   }
 }
 function renderNetwork() {
+  renderWithInspector(renderNetworkContent);
+}
+function renderNetworkContent() {
   const claimed = new Map(state.ips.map((ip) => [ip.address, ip]));
   networkSelected = new Set(
     [...networkSelected].filter((a) => !claimed.has(a)),
@@ -409,7 +412,7 @@ function renderNetwork() {
       ${
         page.length
           ? html`<div class="table-wrap">
-                <table>
+                <table class="network-table">
                   <thead>
                     <tr>
                       <th>
@@ -432,6 +435,7 @@ function renderNetwork() {
                       .map((address) => {
                         const ip = claimed.get(address);
                         return html`<tr
+                          data-address="${esc(address)}"
                           class="${networkSelected.has(address) ? "selected-row" : ""}"
                         >
                           <td>
@@ -572,7 +576,7 @@ function ipRows(ips) {
   return ips
     .map((ip) => {
       const m = ip.assignment && machine(ip.assignment.machine_id);
-      return html`<tr>
+      return html`<tr data-address="${esc(ip.address)}">
         <td>
           ${addressIdentity(ip.address, ip)}${ip.reusable ? `<span class="subtext">${t("Reutilizable")}</span>` : ""}
         </td>
@@ -604,6 +608,9 @@ function ipRows(ips) {
     .join("");
 }
 function renderIps() {
+  renderWithInspector(renderIpsContent);
+}
+function renderIpsContent() {
   const ips = matchingIps();
   $("#content").innerHTML = html`<section class="panel">
     <div class="panel-title">
@@ -630,7 +637,7 @@ function renderIps() {
     )}${
       ips.length
         ? html`<div class="table-wrap">
-              <table>
+              <table class="ip-table">
                 <thead>
                   <tr>
                     <th>Equipo / IP</th>
@@ -668,6 +675,9 @@ function renderIps() {
   </section> `;
 }
 function renderMachines() {
+  renderWithInspector(renderMachinesContent);
+}
+function renderMachinesContent() {
   const list = state.machines.filter(
     (m) =>
       (filter === "all" || m.lifecycle === filter) &&
@@ -697,7 +707,7 @@ function renderMachines() {
     )}${
       list.length
         ? html`<div class="table-wrap">
-            <table>
+            <table class="machine-table">
               <thead>
                 <tr>
                   <th>Máquina</th>
@@ -713,7 +723,7 @@ function renderMachines() {
                     const ips = state.ips.filter(
                       (ip) => ip.assignment?.machine_id === m.id,
                     );
-                    return html`<tr>
+                    return html`<tr data-machine="${m.id}">
                       <td>
                         ${machineLink(m.id)}<small class="checked-at"
                           >${esc(m.hostname)}</small
@@ -789,6 +799,9 @@ async function loadHistory(append = false) {
   renderHistory();
 }
 function renderHistory() {
+  renderWithInspector(renderHistoryContent);
+}
+function renderHistoryContent() {
   const title = historyFilter.ip_id
     ? t("Historial de ") + ipById(Number(historyFilter.ip_id))?.address
     : historyFilter.machine_id
@@ -806,7 +819,54 @@ function renderHistory() {
   </section>`;
 }
 let inspectorHistory = [],
-  inspectorTrigger = null;
+  inspectorTrigger = null,
+  inspectorAnchor = null;
+
+// Keep the live form outside table rendering so filters and refreshes preserve drafts.
+function renderWithInspector(render) {
+  const panel = $("#inspector");
+  const focused = panel.contains(document.activeElement)
+    ? document.activeElement
+    : null;
+  $("#workspace-layout").append(panel);
+  render();
+  placeInspector();
+  if (focused?.isConnected) focused.focus({ preventScroll: true });
+}
+function placeInspector() {
+  const panel = $("#inspector");
+  if (panel.hidden) return;
+  const rows = [
+    ...document.querySelectorAll(
+      "#content tr[data-address], #content tr[data-machine]",
+    ),
+  ];
+  const row = rows.find((row) =>
+    inspectorAnchor?.address
+      ? row.dataset.address === inspectorAnchor.address
+      : inspectorAnchor?.machine &&
+        row.dataset.machine === inspectorAnchor.machine,
+  );
+  const oldRow = $("#expanded-ip-row");
+  if (oldRow && oldRow.previousElementSibling === row && oldRow.contains(panel))
+    return;
+  $("#workspace-layout").prepend(panel);
+  oldRow?.remove();
+  document
+    .querySelectorAll(".inspected-row")
+    .forEach((row) => row.classList.remove("inspected-row"));
+  if (row) {
+    const expanded = document.createElement("tr"),
+      cell = document.createElement("td");
+    expanded.id = "expanded-ip-row";
+    cell.colSpan = row.cells.length;
+    cell.append(panel);
+    expanded.append(cell);
+    row.after(expanded);
+    row.classList.add("inspected-row");
+  }
+}
+
 function openInspector(title, content, { root = false } = {}) {
   const panel = $("#inspector"),
     body = $("#inspector-body");
@@ -821,17 +881,32 @@ function openInspector(title, content, { root = false } = {}) {
         ? document.activeElement
         : null,
     });
-  if (!panel.contains(document.activeElement))
+  if (!panel.contains(document.activeElement)) {
     inspectorTrigger = document.activeElement;
+    const row = inspectorTrigger?.closest("tr[data-address], tr[data-machine]");
+    if (row && !inspectorAnchor)
+      inspectorAnchor = {
+        address: row.dataset.address,
+        machine: row.dataset.machine,
+      };
+  }
+  if (root || panel.hidden) panel.style.removeProperty("--inspector-height");
+  else
+    panel.style.setProperty(
+      "--inspector-height",
+      `${Math.ceil(body.getBoundingClientRect().height)}px`,
+    );
   detailKey = null;
   $("#inspector-title").textContent = title;
   body.innerHTML = content;
   panel.hidden = false;
   $("#workspace-layout").classList.add("inspector-open");
   panel.scrollTop = 0;
+  placeInspector();
   updateInspectorBack();
   $("#inspector-title").focus({ preventScroll: true });
-  if (window.matchMedia("(max-width: 900px)").matches)
+  const bounds = $(".inspector-heading").getBoundingClientRect();
+  if (bounds.top < 0 || bounds.bottom > window.innerHeight)
     panel.scrollIntoView({ block: "start", behavior: "instant" });
 }
 function updateInspectorBack() {
@@ -868,12 +943,19 @@ async function backInspector() {
 }
 function closeInspector(force = false) {
   if ((submitting && !force) || $("#inspector").hidden) return;
+  const restoreFocus = $("#inspector").contains(document.activeElement);
   $("#inspector").hidden = true;
   $("#workspace-layout").classList.remove("inspector-open");
   inspectorHistory = [];
   detailKey = null;
   $("#inspector-body").replaceChildren();
-  if (inspectorTrigger?.isConnected)
+  $("#workspace-layout").append($("#inspector"));
+  $("#expanded-ip-row")?.remove();
+  document
+    .querySelectorAll(".inspected-row")
+    .forEach((row) => row.classList.remove("inspected-row"));
+  inspectorAnchor = null;
+  if (restoreFocus && inspectorTrigger?.isConnected)
     inspectorTrigger.focus({ preventScroll: true });
 }
 function field(name, label, value = "", options = {}) {
@@ -1028,6 +1110,7 @@ function ipMachineForm(address, { edit = false, replace = false } = {}) {
   const extraFields = Object.entries(fieldLabels).filter(
     ([key]) => !["name", "os"].includes(key),
   );
+  inspectorAnchor = { address };
   openInspector(
     current?.name ? `${current.name} · ${address}` : address,
     form(
@@ -1194,6 +1277,7 @@ async function showIp(id) {
       ),
     );
   const history = state.assignments.filter((r) => r.ip_id === id).reverse();
+  inspectorAnchor = { address: ip.address };
   openInspector(
     m?.name ? `${m.name} · ${ip.address}` : ip.address,
     html`
@@ -1255,6 +1339,7 @@ async function showIp(id) {
   await loadDetailHistory({ ip_id: id }, detailKey);
 }
 async function showMachine(id) {
+  inspectorAnchor = { machine: String(id) };
   const m = machine(id);
   if (!m) return;
   const ips = state.ips.filter((ip) => ip.assignment?.machine_id === id);
