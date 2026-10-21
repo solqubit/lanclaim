@@ -9,8 +9,8 @@
     sans-serif;
   font-synthesis: none;
   color: #e3e9f0;
-  background: #10151d;
-  --line: #344151;
+  background: #121418;
+  --line: #363c46;
   --muted: #b0bccb;
   --green: #a4dfc4;
   --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
@@ -41,7 +41,7 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 3px solid #88c9f0;
+  outline: 3px solid #a3b8fa;
   outline-offset: 3px;
 }
 a {
@@ -56,14 +56,16 @@ a {
   gap: 40px;
   min-height: 68px;
   padding: 0 max(28px, calc((100vw - 1360px) / 2));
-  border-bottom: 1px solid #2d3744;
-  background: #141a22;
+  border-bottom: 1px solid #30363f;
+  background: #17191e;
 }
 .brand {
   display: flex;
   align-items: center;
   gap: 9px;
-  font: 600 19px var(--mono);
+  font:
+    600 19px system-ui,
+    sans-serif;
   color: #e3e9f0;
   text-decoration: none;
 }
@@ -84,11 +86,11 @@ a {
 }
 .nav-item:hover {
   color: #f0f4f8;
-  background: #1a232e;
+  background: #22252d;
 }
 .nav-item.active {
   color: #d5e9ff;
-  border-bottom-color: #84b5e2;
+  border-bottom-color: #91a7e4;
 }
 .nav-item b {
   border-radius: 5px;
@@ -113,8 +115,8 @@ main {
 }
 #language {
   color: #d2deeb;
-  background: #1e2a38;
-  border: 1px solid #405166;
+  background: #21242b;
+  border: 1px solid #414854;
   border-radius: 5px;
   padding: 7px 9px;
   font-size: 12px;
@@ -156,7 +158,7 @@ h2 {
   color: #e9f0f8;
 }
 p {
-  color: #b2c0d0;
+  color: #b7becb;
   font-size: 14px;
   line-height: 1.7;
 }
@@ -181,19 +183,19 @@ p {
 }
 .primary {
   color: #e6f5ff;
-  background: #285b78;
-  border: 1px solid #5084a0;
+  background: #485d99;
+  border: 1px solid #677db6;
 }
 .primary:hover {
-  background: #326c8d;
+  background: #536cac;
 }
 .secondary {
   color: #d0dcea;
-  background: #263445;
-  border: 1px solid #46586d;
+  background: #272b33;
+  border: 1px solid #414854;
 }
 .secondary:hover {
-  background: #33465b;
+  background: #323741;
 }
 .danger {
   color: #f2b8ad;
@@ -207,8 +209,8 @@ p {
   margin-bottom: 18px;
 }
 .stat {
-  background: #1b2531;
-  border: 1px solid #344151;
+  background: #21242b;
+  border: 1px solid #363c46;
   border-radius: 6px;
   padding: 8px 12px;
   color: #b8c7d7;
@@ -219,11 +221,11 @@ p {
   margin-right: 5px;
 }
 .stat:hover {
-  background: #273445;
+  background: #2c3039;
 }
 .panel {
-  background: #18222e;
-  border: 1px solid #35465a;
+  background: #1b1e24;
+  border: 1px solid #363c46;
   border-radius: 9px;
   overflow: hidden;
 }
@@ -272,13 +274,13 @@ p {
   font-size: 12px;
 }
 .tab.active {
-  background: #2d485d;
+  background: #30394d;
   color: #e3f0fa;
 }
 .search {
-  background: #131e2b;
+  background: #15171c;
   color: #e1ebf6;
-  border: 1px solid #435a74;
+  border: 1px solid #414854;
   border-radius: 5px;
   padding: 10px 11px;
   font-size: 12px;
@@ -298,7 +300,7 @@ table {
   white-space: nowrap;
 }
 thead {
-  background: #223246;
+  background: #23262e;
   color: #bfd3e9;
   font-size: 11px;
   letter-spacing: 0.4px;
@@ -307,33 +309,33 @@ thead {
 th {
   padding: 13px 22px;
   font-weight: 550;
-  border-block: 1px solid #3a4e68;
+  border-block: 1px solid #373d48;
 }
 td {
-  padding: 18px 22px;
+  padding: 14px 22px;
   color: #c0d0e1;
-  border-bottom: 1px solid #30435a;
+  border-bottom: 1px solid #30363f;
 }
 tbody tr:hover {
-  background: #203248;
+  background: #242931;
 }
 tbody tr:last-child td {
   border-bottom: 0;
 }
 .ip-address {
   font: 500 13px var(--mono);
-  color: #a9e2ca;
+  color: #dae2f2;
 }
 .link-button {
   padding: 0;
   background: none;
-  color: #b7d9f7;
+  color: #c0cef3;
   text-align: left;
   font-size: inherit;
 }
 .link-button.ip-address {
   font-family: var(--mono);
-  color: #a9e2ca;
+  color: #dae2f2;
 }
 .link-button:hover {
   text-decoration: underline;
@@ -359,20 +361,20 @@ tbody tr:last-child td {
 }
 .badge.available,
 .badge.active {
-  background: #244332;
+  background: #25382f;
   color: #b4e0c3;
 }
 .badge.assigned {
-  background: #294763;
+  background: #2b354c;
   color: #b8dbff;
 }
 .badge.planned {
-  background: #443553;
+  background: #353044;
   color: #ddc7ff;
 }
 .badge.review,
 .badge.reinstalling {
-  background: #4a3c25;
+  background: #3c3428;
   color: #f0cf92;
 }
 .badge.retired {
@@ -384,11 +386,11 @@ tbody tr:last-child td {
   color: #bdcedf;
 }
 .muted {
-  color: #a0b4c8;
+  color: #aeb7c5;
 }
 .subtext {
   display: block;
-  color: #a2b8d0;
+  color: #adb6c4;
   font-size: 11px;
   margin-top: 5px;
 }
@@ -402,7 +404,7 @@ tbody tr:last-child td {
   font-size: 10px;
 }
 .row-action {
-  color: #a9d2f3;
+  color: #b0c4f5;
   background: none;
   padding: 5px;
   font-size: 12px;
@@ -618,13 +620,13 @@ dialog {
   max-height: 90vh;
   padding: 0;
   color: #d9e7f3;
-  background: #192838;
-  border: 1px solid #56728c;
+  background: #1c1f26;
+  border: 1px solid #454c58;
   border-radius: 11px;
   box-shadow: 0 20px 90px #0009;
 }
 dialog::backdrop {
-  background: #050b14bd;
+  background: #080a0dcc;
   backdrop-filter: blur(3px);
 }
 .dialog-heading {
@@ -641,7 +643,7 @@ dialog::backdrop {
   height: 29px;
   width: 29px;
   border-radius: 5px;
-  background: #354c63;
+  background: #303640;
   color: #d3e5f5;
   font-size: 21px;
 }
@@ -661,8 +663,8 @@ label select {
   display: block;
   width: 100%;
   color: #e3f0fc;
-  background: #101f30;
-  border: 1px solid #536e8c;
+  background: #15171c;
+  border: 1px solid #49515f;
   border-radius: 5px;
   margin-top: 7px;
   padding: 10px 11px;
@@ -687,11 +689,11 @@ textarea {
   margin: 0 0 17px;
 }
 .notice {
-  background: #213d42;
-  border: 1px solid #4e7477;
+  background: #252d3b;
+  border: 1px solid #485873;
   border-radius: 6px;
   padding: 13px;
-  color: #c4e2de;
+  color: #d3deef;
   line-height: 1.7;
   font-size: 13px;
   margin: 14px 0;
@@ -723,7 +725,7 @@ textarea {
 .toast {
   position: fixed;
   bottom: 25px;
-  left: calc(50% + 100px);
+  left: 50%;
   transform: translateX(-50%);
   color: #d7eee3;
   background: #254537;
@@ -864,7 +866,7 @@ tbody .selected-row:hover {
   align-items: center;
   gap: 14px;
   padding: 15px 18px;
-  border-bottom: 1px solid #303d4c;
+  border-bottom: 1px solid #363c46;
 }
 .network-toolbar .search {
   margin-left: auto;
@@ -913,6 +915,124 @@ tbody .selected-row:hover {
 }
 .empty-symbol {
   display: none;
+}
+
+.ip-overview {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 16px;
+  margin-bottom: 8px;
+}
+.ip-state-line {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.detail-label {
+  display: block;
+  color: #b1bac8;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+.ip-overview h3 {
+  color: #edf1f8;
+  font-size: 22px;
+  margin: 0;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.ip-overview p {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+.ip-connectivity {
+  margin-top: 14px;
+}
+.ip-connectivity .checked-at {
+  display: inline;
+  margin-left: 10px;
+}
+.ip-actions {
+  display: grid;
+}
+.ip-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 13px 10px;
+  background: transparent;
+  color: #dbe3f1;
+  text-align: left;
+  border-bottom: 1px solid #303640;
+  border-radius: 0;
+}
+.ip-action strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 550;
+}
+.ip-action small {
+  display: block;
+  color: #b0b9c8;
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.ip-action:hover {
+  background: #252b35;
+  border-radius: 6px;
+}
+.ip-action.emphasized strong {
+  color: #b9cbff;
+}
+.ip-action.destructive strong {
+  color: #edb6af;
+}
+.ip-more {
+  margin-top: 18px;
+  color: #c2cbd9;
+  font-size: 13px;
+}
+.ip-more summary,
+.optional-fields summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.ip-more .detail-section {
+  margin-top: 8px;
+  padding-top: 0;
+  border: 0;
+}
+.ip-more .timeline {
+  padding-inline: 0;
+}
+.ip-footnote {
+  margin: 22px 0 0;
+  color: #aab3c2;
+  font-size: 12px;
+}
+.ip-form-intro h3 {
+  color: #e9eef6;
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+.ip-form-intro p {
+  font-size: 13px;
+  margin: 0 0 20px;
+}
+.optional-fields {
+  color: #c2cbd9;
+  font-size: 13px;
+  margin: 8px 0 18px;
+}
+.optional-fields .form-grid {
+  margin-top: 10px;
+}
+.save-ip-only {
+  margin: 0 0 18px;
+  padding-left: 0;
 }
 @media (max-width: 1000px) {
   .app-header {

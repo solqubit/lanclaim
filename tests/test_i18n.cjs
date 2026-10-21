@@ -52,3 +52,7 @@ assert.equal(vm.runInContext("t('Red del servidor')", en), "Server network");
 assert.equal(vm.runInContext("t('Sin respuesta')", en), "No response");
 assert.equal(vm.runInContext("t('Direcciones IP')", en), "IP addresses");
 assert.equal(vm.runInContext("t('Ya hay un escaneo en curso.')", en), "A scan is already running.");
+
+assert.equal(vm.runInContext("t('Guardar IP y equipo')", en), "Save IP and device");
+assert.equal(vm.runInContext("t('Voy a formatear este equipo')", en), "I am reinstalling this device");
+assert.equal(vm.runInContext("t('El equipo de esta IP cambió. Actualiza antes de guardar.')", en), "The device using this IP changed. Refresh before saving.");

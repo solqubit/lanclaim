@@ -182,7 +182,6 @@ function navigate(next, nextFilter = "all") {
   const [title, subtitle] = titles[view];
   $("#page-title").textContent = title;
   $("#page-subtitle").textContent = subtitle;
-  $("#new-machine").hidden = view !== "machines";
   $("#claim").hidden = view === "history" || view === "machines";
   $("#stats").hidden = view !== "ips";
   document.title = title + " · LanClaim";
@@ -436,7 +435,12 @@ function renderNetwork() {
                             />
                           </td>
                           <td>
-                            <span class="ip-address">${esc(address)}</span>
+                            <button
+                              class="link-button ip-address"
+                              data-open-address="${esc(address)}"
+                            >
+                              ${esc(address)}
+                            </button>
                           </td>
                           <td data-observation="${esc(address)}">
                             ${observationCell(address)}
@@ -448,7 +452,7 @@ function renderNetwork() {
                             ${ip?.assignment ? machineLink(ip.assignment.machine_id) : ip?.plan ? esc(ip.plan.target) : "—"}
                           </td>
                           <td>
-                            ${ip ? html`<button class="row-action" data-action="ip-detail" data-id="${ip.id}">Administrar</button>` : html`<button class="row-action" data-claim-address="${esc(address)}">Reclamar</button>`}
+                            ${ip ? html`<button class="row-action" data-action="ip-detail" data-id="${ip.id}">Ver IP</button>` : html`<button class="row-action" data-open-address="${esc(address)}">Añadir equipo</button>`}
                           </td>
                         </tr>`;
                       })
@@ -596,7 +600,7 @@ function ipRows(ips) {
         </td>
         <td>
           <button class="row-action" data-action="ip-detail" data-id="${ip.id}">
-            Administrar ↗
+            Ver IP
           </button>
         </td>
       </tr>`;
@@ -744,10 +748,10 @@ function renderMachines() {
               ? t("Sin máquinas en esta vista")
               : t("Dale nombre a tu infraestructura"),
             t(
-              "Registra equipos físicos o virtuales, aunque estén apagados o todavía no tengan IP.",
+              "Abre una IP en Red o Mis IPs y añade su equipo. Aparecerá aquí automáticamente.",
             ),
             t(
-              '<button class="primary" data-action="create-machine">＋ Registrar máquina</button>',
+              '<button class="primary" data-nav="network">Añadir equipo desde una IP</button>',
             ),
           )
     }
@@ -952,56 +956,208 @@ function machineForm(id) {
     ),
   );
 }
+function ipAction(action, id, title, description, tone = "") {
+  return `<button class="ip-action ${tone}" data-action="${action}" data-id="${id}"><span><strong>${esc(title)}</strong><small>${esc(description)}</small></span><span aria-hidden="true">→</span></button>`;
+}
+function openAddress(address) {
+  const ip = state.ips.find((item) => item.address === address);
+  if (ip) return showIp(ip.id);
+  ipMachineForm(address);
+}
+function ipMachineForm(address, { edit = false, replace = false } = {}) {
+  const ip = state.ips.find((item) => item.address === address);
+  const current = ip?.assignment && machine(ip.assignment.machine_id);
+  const existing = state.machines.filter(
+    (m) => m.lifecycle === "active" && m.id !== current?.id,
+  );
+  const values = edit ? current : {};
+  const extraFields = Object.entries(fieldLabels).filter(
+    ([key]) => !["name", "os"].includes(key),
+  );
+  openDialog(
+    address,
+    form(
+      html`
+        <div class="ip-form-intro">
+          <h3>
+            ${edit ? t("Datos del equipo") : replace ? t("Cambiar el equipo de esta IP") : t("¿Qué equipo usa esta IP?")}
+          </h3>
+          <p>
+            ${edit ? t("Actualiza su ficha. La IP y el historial se conservan.") : replace ? html`Equipo actual: <strong>${esc(current?.name)}</strong>. El cambio afecta solo a esta IP; las demás asignaciones se conservan.` : ip ? t("Escribe un nombre y guarda. El equipo se registrará aquí mismo.") : t("Al guardar, la IP quedará reclamada y vinculada al equipo. No se cambia la configuración de red del equipo.")}
+          </p>
+        </div>
+        ${
+          !edit && existing.length
+            ? html`<label
+                >Equipo<select id="ip-machine-mode" name="mode">
+                  <option value="create">Registrar uno nuevo</option>
+                  <option value="existing">Elegir uno que ya registré</option>
+                </select></label
+              >`
+            : ""
+        }
+        ${!ip ? html`<button type="button" class="row-action save-ip-only" data-claim-address="${esc(address)}">Guardar solo la IP, sin equipo</button>` : ""}
+        <div id="ip-new-machine">
+          <div class="form-grid">
+            ${field("name", t("Nombre del equipo"), values?.name || (!replace && ip?.plan?.target) || "", { required: true })}${field("os", t("Sistema operativo"), values?.os || "")}
+          </div>
+          <details class="optional-fields">
+            <summary>Más datos del equipo (opcional)</summary>
+            <div class="form-grid">
+              ${extraFields.map(([key, label]) => field(key, label, values?.[key] || "", { area: ["description", "notes"].includes(key), wide: ["description", "notes"].includes(key) })).join("")}
+            </div>
+          </details>
+        </div>
+        ${
+          !edit && existing.length
+            ? html`<label id="ip-existing-machine" hidden
+                >Equipo registrado<select name="machine_id" disabled required>
+                  <option value="">Selecciona un equipo</option>
+                  ${existing.map((m) => `<option value="${m.id}">${esc(m.name)}${m.hostname ? " · " + esc(m.hostname) : ""}</option>`).join("")}
+                </select></label
+              >`
+            : ""
+        }
+        ${replace ? field("reason", t("Nota del cambio (opcional)"), "") : ""}
+        ${edit && state.ips.filter((i) => i.assignment?.machine_id === current?.id).length > 1 ? html`<p class="help">Este equipo tiene varias IPs. Los datos de su ficha se actualizan para todas; sus asignaciones se conservan.</p>` : ""}
+      `,
+      edit
+        ? t("Guardar datos")
+        : replace
+          ? t("Guardar cambio de equipo")
+          : t("Guardar IP y equipo"),
+    ),
+  );
+  $("#ip-machine-mode")?.addEventListener("change", (event) => {
+    const useExisting = event.target.value === "existing";
+    $("#ip-new-machine").hidden = useExisting;
+    $("#ip-existing-machine").hidden = !useExisting;
+    $("#ip-new-machine")
+      .querySelectorAll("input,textarea")
+      .forEach((input) => (input.disabled = useExisting));
+    $("#ip-existing-machine select").disabled = !useExisting;
+  });
+  bindForm(async (data) => {
+    const result = await mutate(
+      "save_ip_machine",
+      {
+        address,
+        mode: edit ? "edit" : data.mode || "create",
+        assignment_id: ip?.assignment?.id ?? null,
+        machine: Object.fromEntries(
+          Object.keys(fieldLabels).map((key) => [key, data[key] || ""]),
+        ),
+        machine_id: data.machine_id ? Number(data.machine_id) : undefined,
+        plan_id: ip?.plan?.id,
+        reason:
+          data.reason || (replace ? t("Cambio de equipo desde la IP.") : ""),
+      },
+      t("IP y equipo guardados."),
+    );
+    await showIp(result.ip_id);
+  });
+}
 async function showIp(id) {
   const ip = ipById(id);
   if (!ip) return;
   const a = ip.assignment,
-    p = ip.plan;
+    p = ip.plan,
+    m = a && machine(a.machine_id);
   const reviews = state.reviews.filter((r) => r.ip_id === id && !r.closed_at);
-  let actions = "";
-  if (ip.status === "available")
-    actions += html`<button
-        class="primary"
-        data-action="assign"
-        data-id="${id}"
-      >
-        Asignar a máquina</button
-      ><button class="secondary" data-action="plan" data-id="${id}">
-        Planificar
-      </button>`;
-  if (a)
-    actions += html`<button
-      class="secondary"
-      data-action="release"
-      data-id="${id}"
-    >
-      Liberar asignación
-    </button>`;
+  const currentIps = m
+    ? state.ips.filter((i) => i.assignment?.machine_id === m.id)
+    : [];
+  const mainActions = [];
+  if (m) {
+    mainActions.push(
+      ipAction(
+        "edit-ip-machine",
+        id,
+        t("Editar datos del equipo"),
+        t("Nombre, sistema operativo y otros datos de este equipo."),
+      ),
+    );
+    mainActions.push(
+      ipAction(
+        m.lifecycle === "reinstalling" ? "finish_reinstall" : "reinstall",
+        m.id,
+        m.lifecycle === "reinstalling"
+          ? t("Ya terminé de formatear")
+          : t("Voy a formatear este equipo"),
+        m.lifecycle === "reinstalling"
+          ? t("Vuelve a activo conservando sus IPs y su historial.")
+          : t(
+              "Conserva esta IP y las demás del equipo durante la reinstalación.",
+            ),
+      ),
+    );
+    mainActions.push(
+      ipAction(
+        "release",
+        id,
+        t("Dejar esta IP disponible"),
+        t("Desvincula el equipo de esta IP. La dirección sigue siendo tuya."),
+      ),
+    );
+    if (!ip.review)
+      mainActions.push(
+        ipAction(
+          "replace-ip-machine",
+          id,
+          t("Esta IP ahora es de otro equipo"),
+          t("Guarda el equipo anterior en el historial y asigna el nuevo."),
+        ),
+      );
+  } else if (!ip.review) {
+    mainActions.push(
+      ipAction(
+        "assign",
+        id,
+        p ? t("Ya tengo el equipo para esta IP") : t("Añadir equipo a esta IP"),
+        t("Regístralo aquí o elige uno existente, sin salir de la IP."),
+        "emphasized",
+      ),
+    );
+    if (!p)
+      mainActions.push(
+        ipAction(
+          "plan",
+          id,
+          t("Guardar para más adelante"),
+          t("Reserva esta IP en tu inventario para un uso futuro."),
+        ),
+      );
+  }
   if (p)
-    actions += html`${!ip.review ? html`<button class="primary" data-action="assign" data-id="${id}">Ejecutar plan</button>` : ""}<button
-        class="secondary"
-        data-action="cancel-plan"
-        data-id="${p.id}"
-      >
-        Cancelar plan
-      </button>`;
-  actions += html`<button
-      class="secondary"
-      data-action="review"
-      data-id="${id}"
-    >
-      Abrir revisión</button
-    ><button class="quiet" data-action="ip-notes" data-id="${id}">
-      Editar notas
-    </button>`;
+    mainActions.push(
+      ipAction(
+        "cancel-plan",
+        p.id,
+        t("Quitar la reserva"),
+        t(
+          "La IP sigue reclamada y vuelve a estar disponible si no tiene incidencias.",
+        ),
+      ),
+    );
+  const history = state.assignments.filter((r) => r.ip_id === id).reverse();
   openDialog(
     ip.address,
-    html`${badge(ip.status)}
-      <p class="help">
-        Reclamada el ${esc(date(ip.claimed_at))}. Esta dirección permanece en tu
-        espacio al liberar su asignación.
-      </p>
-      ${a ? html`<div class="notice">Asignada a ${machineLink(a.machine_id)} desde ${esc(date(a.started_at))}.</div>` : p ? html`<div class="notice">Planificada para <strong>${esc(p.target)}</strong><br />${esc(p.notes)}</div>` : ""}${ip.notes ? `<p>${esc(ip.notes)}</p>` : ""}${reviews
+    html`
+      <div class="ip-overview">
+        <div class="ip-state-line">
+          ${badge(ip.status)}${m?.lifecycle === "reinstalling" ? badge("reinstalling") : ""}
+        </div>
+        <span class="detail-label"
+          >${m ? t("Equipo actual") : p ? t("Reservada para") : t("Equipo")}</span
+        >
+        <h3>${esc(m?.name || p?.target || t("Sin equipo asignado"))}</h3>
+        <p>
+          ${esc(m ? [m.os, m.hostname].filter(Boolean).join(" · ") || t("Puedes completar sus datos cuando quieras.") : p?.notes || t("Puedes usarla ahora o guardarla para después."))}
+        </p>
+        ${observations.has(ip.address) ? `<div class="ip-connectivity">${observationCell(ip.address)}</div>` : ""}
+        ${ip.notes ? `<p>${esc(ip.notes)}</p>` : ""}
+      </div>
+      ${reviews
         .map(
           (r) =>
             html`<div class="review-item">
@@ -1011,33 +1167,34 @@ async function showIp(id) {
                 data-action="resolve-review"
                 data-id="${r.id}"
               >
-                Resolver revisión →
+                Marcar incidencia como resuelta
               </button>
             </div>`,
         )
         .join("")}
-      <div class="actions">${actions}</div>
-      <section class="detail-section">
-        <h3>Asignaciones de esta dirección</h3>
-        ${
-          state.assignments
-            .filter((r) => r.ip_id === id)
-            .reverse()
-            .map(
-              (r) =>
-                `<div class="assignment-line">${machineLink(r.machine_id)}<br><span class="subtext">${esc(date(r.started_at))} → ${esc(date(r.ended_at))}${r.end_reason ? " · " + esc(r.end_reason) : ""}</span></div>`,
-            )
-            .join("") ||
-          t('<p class="help">Todavía no se ha asignado a ninguna máquina.</p>')
-        }
-      </section>
-      <section class="detail-section detail-history">
-        <h3>Movimientos recientes</h3>
-        <div id="detail-events">Cargando…</div>
-        <button class="row-action" data-action="ip-history" data-id="${id}">
-          Consultar todo el historial →
-        </button>
-      </section>`,
+      <div class="ip-actions">${mainActions.join("")}</div>
+      <details class="ip-more">
+        <summary>Notas y otras opciones</summary>
+        <div class="ip-actions">
+          ${ipAction("ip-notes", id, t("Notas de esta IP"), t("Guarda información útil sobre esta dirección."))}
+          ${ipAction("review", id, t("Hay un problema con esta IP"), t("Anota un posible conflicto para revisarlo sin perder la asignación."))}
+          ${m ? ipAction("retire", m.id, t("Ya no uso este equipo"), html`Retira el equipo y libera sus ${currentIps.length} IPs. Se conservan las direcciones y el historial.`, "destructive") : ""}
+        </div>
+      </details>
+      <details class="ip-more">
+        <summary>Historial de esta IP</summary>
+        <div class="detail-section">
+          ${history.map((r) => `<div class="assignment-line"><strong>${esc(machine(r.machine_id)?.name)}</strong><span class="subtext">${esc(date(r.started_at))} → ${esc(date(r.ended_at))}${r.end_reason ? " · " + esc(r.end_reason) : ""}</span></div>`).join("") || html`<p class="help">Todavía no se ha asignado a ninguna máquina.</p>`}
+          <div id="detail-events">Cargando…</div>
+          <button class="row-action" data-action="ip-history" data-id="${id}">
+            Consultar todo el historial →
+          </button>
+        </div>
+      </details>
+      <p class="ip-footnote">
+        Esta IP permanece en tu inventario aunque el equipo esté apagado.
+      </p>
+    `,
   );
   detailKey = "ip:" + id;
   await loadDetailHistory({ ip_id: id }, detailKey);
@@ -1114,49 +1271,7 @@ async function loadDetailHistory(params, key) {
   }
 }
 function assignForm(id) {
-  const ip = ipById(id),
-    machines = state.machines.filter((m) => m.lifecycle === "active");
-  if (!machines.length) {
-    openDialog(
-      t("Necesitas una máquina activa"),
-      html`<p class="help">
-          Registra una máquina o finaliza su reinstalación para poder asignar
-          ${esc(ip.address)}.
-        </p>
-        <button class="primary" data-action="create-machine">
-          Registrar máquina
-        </button>`,
-    );
-    return;
-  }
-  openDialog(
-    ip.plan ? t("Ejecutar planificación") : t("Asignar ") + ip.address,
-    form(
-      html`<p class="help">
-          ${ip.plan ? html`Plan para ${esc(ip.plan.target)}. ` : ""}Esta IP
-          seguirá asignada aunque el equipo esté apagado.
-        </p>
-        <label
-          >Máquina *<select name="machine_id" required>
-            <option value="">Selecciona una máquina</option>
-            ${machines.map((m) => `<option value="${m.id}">${esc(m.name)}${m.hostname ? " · " + esc(m.hostname) : ""}</option>`).join("")}
-          </select></label
-        >${field("reason", t("Notas de la asignación"), "", { area: true })}`,
-      t("Asignar IP"),
-    ),
-  );
-  bindForm((data) =>
-    mutate(
-      "assign",
-      {
-        ...data,
-        ip_id: id,
-        machine_id: Number(data.machine_id),
-        ...(ip.plan ? { plan_id: ip.plan.id } : {}),
-      },
-      t("IP asignada."),
-    ),
-  );
+  ipMachineForm(ipById(id).address);
 }
 function reasonForm(
   title,
@@ -1166,15 +1281,26 @@ function reasonForm(
   label = t("Confirmar"),
   danger = false,
 ) {
+  const requiresDetails = ["review", "resolve_review"].includes(action);
+  const returnIp = detailKey?.startsWith("ip:")
+    ? Number(detailKey.slice(3))
+    : null;
   openDialog(
     title,
     form(
-      `<div class="notice ${danger ? "warning" : ""}">${explanation}</div>${field("reason", t("Motivo o detalle"), "", { required: true, area: true })}`,
+      `<div class="notice ${danger ? "warning" : ""}">${explanation}</div>${field("reason", requiresDetails ? t("Motivo o detalle") : t("Nota (opcional)"), "", { required: requiresDetails, area: true })}`,
       label,
       danger,
     ),
   );
-  bindForm((data) => mutate(action, { ...payload, ...data }));
+  bindForm(async (data) => {
+    await mutate(action, {
+      ...payload,
+      ...data,
+      reason: data.reason?.trim() || (requiresDetails ? "" : label),
+    });
+    if (returnIp) await showIp(returnIp);
+  });
 }
 async function dispatch(action, id) {
   const ip = ipById(id);
@@ -1238,57 +1364,64 @@ async function dispatch(action, id) {
     case "machine-detail":
       await showMachine(id);
       break;
+    case "edit-ip-machine":
+      ipMachineForm(ip.address, { edit: true });
+      break;
+    case "replace-ip-machine":
+      ipMachineForm(ip.address, { replace: true });
+      break;
     case "assign":
       assignForm(id);
       break;
     case "plan":
       openDialog(
-        t("Planificar ") + ip.address,
+        t("Guardar para después: ") + ip.address,
         form(
           html`<p class="help">
               Guarda esta dirección para una máquina futura. No estará
               disponible para otra asignación hasta ejecutar o cancelar el plan.
             </p>
-            ${field("target", t("Máquina futura o propósito"), "", { required: true })}${field("notes", t("Notas"), "", { area: true })}`,
-          t("Planificar IP"),
+            ${field("target", t("¿Para qué la quieres guardar?"), "", { required: true })}${field("notes", t("Notas"), "", { area: true })}`,
+          t("Guardar reserva"),
         ),
       );
-      bindForm((data) =>
-        mutate("plan", { ...data, ip_id: id }, t("IP planificada.")),
-      );
+      bindForm(async (data) => {
+        await mutate("plan", { ...data, ip_id: id }, t("IP planificada."));
+        await showIp(id);
+      });
       break;
     case "release":
       reasonForm(
-        t("Liberar ") + ip.address,
+        t("Dejar disponible: ") + ip.address,
         html`Se cerrará la asignación a
           <strong>${esc(machine(ip.assignment.machine_id)?.name)}</strong>. La
           dirección permanecerá reclamada y conservará su
           historial.${ip.review ? t(" Seguirá pendiente de revisión hasta resolver sus discrepancias.") : t(" Volverá a estar disponible.")}`,
         "release",
         { ip_id: id, assignment_id: ip.assignment.id },
-        t("Liberar asignación"),
+        t("Dejar esta IP disponible"),
       );
       break;
     case "cancel-plan":
       reasonForm(
-        t("Cancelar planificación"),
+        t("Quitar la reserva"),
         t(
           "La IP seguirá reclamada y quedará disponible si no tiene revisiones abiertas.",
         ),
         "cancel_plan",
         { id },
-        t("Cancelar planificación"),
+        t("Quitar la reserva"),
       );
       break;
     case "review":
       reasonForm(
-        t("Revisar ") + ip.address,
+        t("Anotar problema: ") + ip.address,
         t(
           "La asignación o planificación existente se conservará. Documenta la posible discrepancia.",
         ),
         "review",
         { ip_id: id },
-        t("Abrir revisión"),
+        t("Guardar incidencia"),
       );
       break;
     case "resolve-review":
@@ -1307,22 +1440,25 @@ async function dispatch(action, id) {
         t("Notas de ") + ip.address,
         form(field("notes", t("Notas"), ip.notes, { area: true })),
       );
-      bindForm((data) => mutate("ip_notes", { ...data, ip_id: id }));
+      bindForm(async (data) => {
+        await mutate("ip_notes", { ...data, ip_id: id });
+        await showIp(id);
+      });
       break;
     case "reinstall":
       reasonForm(
-        t("Reinstalar / formatear"),
+        t("Voy a formatear este equipo"),
         html`<strong>${esc(machine(id).name)}</strong> pasará a «En
           reinstalación». Todas sus IPs seguirán asignadas. Esta acción registra
           tu mantenimiento; no formatea ni apaga el equipo.`,
         "reinstall",
         { id },
-        t("Iniciar reinstalación"),
+        t("Conservar IPs durante el formateo"),
       );
       break;
     case "finish_reinstall":
       reasonForm(
-        t("Finalizar reinstalación"),
+        t("Ya terminé de formatear"),
         t(
           "La máquina volverá a activa con las mismas IPs. Puedes actualizar su SO, hostname y notas con «Editar ficha».",
         ),
@@ -1388,7 +1524,9 @@ document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button || submitting) return;
   try {
-    if (button.dataset.claimAddress) {
+    if (button.dataset.openAddress) {
+      await openAddress(button.dataset.openAddress);
+    } else if (button.dataset.claimAddress) {
       networkSelected = new Set([button.dataset.claimAddress]);
       await dispatch("claim-selected");
     } else if (button.dataset.network) {
@@ -1447,7 +1585,6 @@ document.addEventListener("change", (event) => {
   }
 });
 $("#claim").addEventListener("click", claimForm);
-$("#new-machine").addEventListener("click", () => machineForm());
 $("#close-dialog").addEventListener("click", closeDialog);
 $("#dialog").addEventListener("cancel", (event) => {
   if (submitting) event.preventDefault();

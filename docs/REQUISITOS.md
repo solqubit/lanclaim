@@ -123,3 +123,8 @@ El descubrimiento fuera del inventario será una acción secundaria y explícita
 - Código, configuración, base de datos y copias tendrán ubicaciones definidas. Reiniciar, actualizar o reinstalar conservando datos no perderá inventario ni historial.
 
 La matriz de distribuciones, el mecanismo de servicio y los detalles de despliegue se fijarán y comprobarán durante la implementación. No se declara soporte probado en esta fase documental.
+
+
+## Interacción centrada en la IP
+
+La IP es el punto de entrada para registrar su equipo, editarlo, cambiarlo, guardar la dirección para después, marcar reinstalación y liberar su asignación. No se requiere crear una máquina en otra pantalla. La pestaña Máquinas es un resumen complementario. Cada acción explica sus consecuencias; historial, notas y opciones menos frecuentes se pliegan. Se mantiene la distribución con navegación superior y tablas, con un acabado oscuro neutro y acentos discretos.

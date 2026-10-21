@@ -219,6 +219,47 @@ class Store:
             raise Invalid('La operación entra en conflicto con el estado actual. Actualiza e inténtalo de nuevo.') from exc
 
     def _command(self, db, action, data):
+        if action == 'save_ip_machine':
+            # Claim, create/edit and assign in one transaction. A failed assignment
+            # must not leave a stray machine or a partially claimed address behind.
+            batch = addresses(data.get('address'))
+            if len(batch) != 1:
+                raise Invalid('Selecciona una sola IP para registrar su equipo.')
+            mode = data.get('mode')
+            if mode not in ('create', 'existing', 'edit') or 'assignment_id' not in data:
+                raise Invalid('Selecciona cómo quieres guardar el equipo de esta IP.')
+            ip = db.execute('SELECT * FROM ips WHERE address=?', (batch[0],)).fetchone()
+            active = db.execute('SELECT * FROM assignments WHERE ip_id=? AND ended_at IS NULL',
+                                (ip['id'],)).fetchone() if ip else None
+            if data['assignment_id'] != (active['id'] if active else None):
+                raise Invalid('El equipo de esta IP cambió. Actualiza antes de guardar.')
+            if mode == 'edit':
+                if not active:
+                    raise Invalid('Esta IP todavía no tiene equipo.')
+                fields = data.get('machine')
+                if not isinstance(fields, dict):
+                    raise Invalid('Se esperaba un objeto JSON.')
+                result = self._command(db, 'edit_machine', {**fields, 'id': active['machine_id']})
+                return {'ip_id': ip['id'], 'machine_id': result['id']}
+            if not ip:
+                self._command(db, 'claim', {'addresses': batch[0]})
+                ip = db.execute('SELECT * FROM ips WHERE address=?', (batch[0],)).fetchone()
+            if mode == 'create':
+                fields = data.get('machine')
+                if not isinstance(fields, dict):
+                    raise Invalid('Se esperaba un objeto JSON.')
+                machine_id = self._command(db, 'create_machine', fields)['id']
+            else:
+                machine_id = self.row(db, 'machines', data.get('machine_id'))['id']
+                if active and machine_id == active['machine_id']:
+                    raise Invalid('Ese equipo ya utiliza esta IP. Puedes editar sus datos.')
+            reason = string(data, 'reason', bool(active))
+            if active:
+                self.release(db, dict(active), reason)
+            self._command(db, 'assign', {'ip_id': ip['id'], 'machine_id': machine_id,
+                                        'plan_id': data.get('plan_id'), 'reason': reason})
+            return {'ip_id': ip['id'], 'machine_id': machine_id}
+
         if action in ('claim', 'preview_claim'):
             batch = addresses(data.get('addresses'))
             existing = {r[0] for r in db.execute('SELECT address FROM ips')}

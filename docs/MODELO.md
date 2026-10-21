@@ -86,3 +86,10 @@ La interfaz no presentará estos totales solapados como categorías sumables. La
 Una máquina en reinstalación conserva sus vínculos, pero no recibe asignaciones nuevas hasta finalizar el mantenimiento. Puede retirarse explícitamente si el mantenimiento termina en una retirada definitiva. Los datos de identidad se editan desde su ficha sin crear una máquina nueva.
 
 Mi red enumera un rango o CIDR y relaciona sus direcciones con el inventario existente. Las sugerencias proceden de las interfaces locales del servidor; no se hacen sondeos al abrir la página ni al elegir un rango. El botón Escanear red inicia explícitamente comprobaciones ICMP acotadas, con progreso y cancelación. Solo la confirmación de las direcciones seleccionadas crea reclamaciones. La última red consultada y el idioma se recuerdan en el navegador; el inventario y su historial permanecen en SQLite.
+
+
+## Guardar equipo desde una IP
+
+`save_ip_machine` reclama una IP si hace falta y crea/asocia su equipo en una sola transacción. La interfaz pide únicamente un nombre para un equipo nuevo; los datos adicionales son opcionales. También permite elegir un equipo ya registrado, editar el equipo actual o cambiar el equipo de una sola IP. Cambiar no retira al anterior ni altera sus otras direcciones.
+
+La petición incluye el identificador esperado de la asignación (o `null` si no existía). Si cambió, se rechaza para no sobrescribir otra operación. Una reserva requiere su identificador de plan al asignar; una revisión abierta impide crear la nueva asignación. Cualquier error revierte reclamación, equipo, liberación y eventos juntos. La edición mantiene la identidad y las asignaciones, incluso durante reinstalación.

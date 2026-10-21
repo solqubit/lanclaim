@@ -408,6 +408,107 @@ Object.assign(english, {
   "No se pudo guardar el resultado del escaneo.":
     "Could not save the scan result.",
 });
+Object.assign(english, {
+  "Ver IP": "Open IP",
+  "Añadir equipo": "Add device",
+  "Datos del equipo": "Device details",
+  "Cambiar el equipo de esta IP": "Change the device using this IP",
+  "¿Qué equipo usa esta IP?": "Which device uses this IP?",
+  "Actualiza su ficha. La IP y el historial se conservan.":
+    "Update its details. The IP and history are preserved.",
+  "Equipo actual": "Current device",
+  "El cambio afecta solo a esta IP; las demás asignaciones se conservan.":
+    "Only this IP changes; other assignments are preserved.",
+  "Escribe un nombre y guarda. El equipo se registrará aquí mismo.":
+    "Enter a name and save. The device will be registered here.",
+  "Al guardar, la IP quedará reclamada y vinculada al equipo. No se cambia la configuración de red del equipo.":
+    "Saving claims this IP and links it to the device. It does not change the device network configuration.",
+  "Equipo registrado": "Registered device",
+  Equipo: "Device",
+  "Registrar uno nuevo": "Register a new device",
+  "Elegir uno que ya registré": "Choose an existing device",
+  "Nombre del equipo": "Device name",
+  "Más datos del equipo (opcional)": "More device details (optional)",
+  "Selecciona un equipo": "Select a device",
+  "Motivo del cambio": "Reason for the change",
+  "Este equipo tiene varias IPs. Los datos de su ficha se actualizan para todas; sus asignaciones se conservan.":
+    "This device has several IPs. Its details are shared across them; assignments are preserved.",
+  "Guardar datos": "Save details",
+  "Guardar cambio de equipo": "Save device change",
+  "Guardar IP y equipo": "Save IP and device",
+  "IP y equipo guardados.": "IP and device saved.",
+  "Editar datos del equipo": "Edit device details",
+  "Nombre, sistema operativo y otros datos de este equipo.":
+    "Name, operating system and other device details.",
+  "Ya terminé de formatear": "Reinstallation is finished",
+  "Voy a formatear este equipo": "I am reinstalling this device",
+  "Vuelve a activo conservando sus IPs y su historial.":
+    "Mark it active again, keeping its IPs and history.",
+  "Conserva esta IP y las demás del equipo durante la reinstalación.":
+    "Keep this IP and the device’s other IPs during reinstallation.",
+  "Dejar esta IP disponible": "Make this IP available",
+  "Desvincula el equipo de esta IP. La dirección sigue siendo tuya.":
+    "Unlink the device from this IP. The address remains yours.",
+  "Esta IP ahora es de otro equipo": "This IP now belongs to another device",
+  "Guarda el equipo anterior en el historial y asigna el nuevo.":
+    "Keep the previous device in history and assign the new one.",
+  "Ya tengo el equipo para esta IP": "The device for this IP is ready",
+  "Añadir equipo a esta IP": "Add a device to this IP",
+  "Regístralo aquí o elige uno existente, sin salir de la IP.":
+    "Register it here or select an existing device, without leaving this IP.",
+  "Guardar para más adelante": "Save for later",
+  "Reserva esta IP en tu inventario para un uso futuro.":
+    "Set this IP aside in your inventory for future use.",
+  "Quitar la reserva": "Remove the plan",
+  "La IP sigue reclamada y vuelve a estar disponible si no tiene incidencias.":
+    "The IP remains claimed and becomes available if it has no open issues.",
+  "Reservada para": "Set aside for",
+  "Sin equipo asignado": "No device assigned",
+  "Puedes completar sus datos cuando quieras.":
+    "You can fill in its details whenever you like.",
+  "Puedes usarla ahora o guardarla para después.":
+    "Use it now or set it aside for later.",
+  "Marcar incidencia como resuelta": "Mark issue as resolved",
+  "Notas y otras opciones": "Notes and other options",
+  "Notas de esta IP": "Notes for this IP",
+  "Guarda información útil sobre esta dirección.":
+    "Keep useful information about this address.",
+  "Hay un problema con esta IP": "There is a problem with this IP",
+  "Anota un posible conflicto para revisarlo sin perder la asignación.":
+    "Record a possible conflict for review without losing the assignment.",
+  "Ya no uso este equipo": "I no longer use this device",
+  "Retira el equipo y libera sus": "Retire the device and release its",
+  "IPs. Se conservan las direcciones y el historial.":
+    "IPs. Addresses and history are preserved.",
+  "Historial de esta IP": "History of this IP",
+  "Esta IP permanece en tu inventario aunque el equipo esté apagado.":
+    "This IP stays in your inventory even when the device is off.",
+  "Guardar para después:": "Save for later:",
+  "Guardar reserva": "Save plan",
+  "¿Para qué la quieres guardar?": "What will you use it for?",
+  "Dejar disponible:": "Make available:",
+  "Anotar problema:": "Record an issue:",
+  "Guardar incidencia": "Save issue",
+  "Conservar IPs durante el formateo": "Keep IPs during reinstallation",
+  "Guardar solo la IP, sin equipo": "Save just the IP, without a device",
+  "Añadir equipo desde una IP": "Add a device from an IP",
+  "Abre una IP en Red o Mis IPs y añade su equipo. Aparecerá aquí automáticamente.":
+    "Open an IP in Network or My IPs and add its device. It will appear here automatically.",
+  "Selecciona una sola IP para registrar su equipo.":
+    "Select a single IP to register its device.",
+  "Selecciona cómo quieres guardar el equipo de esta IP.":
+    "Choose how to save the device for this IP.",
+  "El equipo de esta IP cambió. Actualiza antes de guardar.":
+    "The device using this IP changed. Refresh before saving.",
+  "Esta IP todavía no tiene equipo.": "This IP does not have a device yet.",
+  "Ese equipo ya utiliza esta IP. Puedes editar sus datos.":
+    "That device already uses this IP. You can edit its details.",
+});
+Object.assign(english, {
+  "Nota (opcional)": "Note (optional)",
+  "Nota del cambio (opcional)": "Change note (optional)",
+  "Cambio de equipo desde la IP.": "Device changed from the IP page.",
+});
 const translationPattern = new RegExp(
   Object.keys(english)
     .sort((a, b) => b.length - a.length)
