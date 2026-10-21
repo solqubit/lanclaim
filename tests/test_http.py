@@ -108,6 +108,16 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIsInstance(json.loads(body)['networks'], list)
 
+    def test_adding_network_scans_it_right_away(self):
+        self.post('/api/networks/add', {'cidr': '172.22.0.0/30'})
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            state = json.loads(self.request('/api/state')[2])
+            if '172.22.0.1' in state['observations'] and not state['scan']['running']:
+                break
+            time.sleep(0.02)
+        self.assertTrue(state['observations']['172.22.0.1']['up'])
+
     def test_scan_now(self):
         self.post('/api/networks/add', {'cidr': '172.21.0.0/30'})
         code, state = self.post('/api/scan/now', {})

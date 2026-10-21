@@ -9,6 +9,7 @@ export function el(tag, attrs = {}, ...children) {
   for (const [key, value] of Object.entries(attrs || {})) {
     if (value === false || value == null) continue;
     if (key === "class") node.className = value;
+    else if (key === "style") Object.assign(node.style, value); // CSSOM: permitido por la CSP
     else if (key.startsWith("on") && typeof value === "function") node.addEventListener(key.slice(2).toLowerCase(), value);
     else if (PROPS.has(key)) node[key] = value;
     else node.setAttribute(key, value === true ? "" : String(value));

@@ -17,7 +17,7 @@ PING_PERMISSION_ERROR = 'El servicio no tiene permisos para usar ping. Actualiza
 PING_TIMEOUT_ERROR = 'Ping no terminó a tiempo. Revisa la carga y la red del servidor.'
 PING_NETWORK_ERROR = 'El servidor no tiene una ruta hacia esa red. Revisa su interfaz, gateway o red virtual.'
 GENERIC_ERROR = 'No se pudo completar el escaneo. Revisa el registro del servicio.'
-BATCH = 64
+BATCH = 16
 
 
 def ping(address):
@@ -120,6 +120,8 @@ class Scanner:
                     if address is None:
                         break
                     batch[address] = self.probe(address) == 'responding'
+                    with self.lock:
+                        self.job['done'] += 1
                     if len(batch) >= BATCH:
                         self._save(batch)
                         batch = {}
@@ -151,5 +153,3 @@ class Scanner:
 
     def _save(self, batch):
         self.store.record_observations(batch, now())
-        with self.lock:
-            self.job['done'] += len(batch)

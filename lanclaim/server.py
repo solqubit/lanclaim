@@ -32,7 +32,7 @@ class Server(ThreadingHTTPServer):
         super().__init__(address, Handler)
         store, scanner = self.store, self.scanner
         self.actions = {
-            'networks/add': lambda d: store.add_network(d.get('cidr'), d.get('name', '')),
+            'networks/add': lambda d: (store.add_network(d.get('cidr'), d.get('name', '')), scanner.scan_now()),
             'networks/rename': lambda d: store.rename_network(d.get('id'), d.get('name', '')),
             'networks/remove': lambda d: store.remove_network(d.get('id')),
             'ips/claim': lambda d: store.claim(d.get('addresses'), d.get('device')),

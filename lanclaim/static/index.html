@@ -1,3 +1,30 @@
 <!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>LanClaim</title><link rel="stylesheet" href="/css/app.css"></head>
-<body><script type="module" src="/js/main.js"></script></body></html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0d10" />
+    <meta name="color-scheme" content="dark" />
+    <title>LanClaim</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/css/app.css" />
+    <script type="module" src="/js/main.js"></script>
+  </head>
+  <body>
+    <header class="top">
+      <a class="brand" href="#red"><img src="/favicon.svg" alt="" width="22" height="22" />LanClaim</a>
+      <nav class="tabs" aria-label="LanClaim">
+        <a class="tab" data-view="red" href="#red"><span>Red</span></a>
+        <a class="tab" data-view="equipos" href="#equipos"><span>Equipos</span> <b id="dev-count" class="count"></b></a>
+      </nav>
+      <div class="spacer"></div>
+      <input id="q" class="search" type="search" autocomplete="off" spellcheck="false" />
+      <select id="lang" class="lang" aria-label="Idioma / Language">
+        <option value="es">ES</option>
+        <option value="en">EN</option>
+      </select>
+    </header>
+    <main id="app"><div class="loading" aria-busy="true"></div></main>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

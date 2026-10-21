@@ -12,7 +12,7 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) {
     keys.add(match[2].replace(/\\(["'])/g, "$1"));
   }
 }
-assert.ok(keys.size > 10, `expected many translated strings, found ${keys.size}`);
+assert.ok(keys.size > 100, `expected many translated strings, found ${keys.size}`);
 const missing = [...keys].filter((k) => !(typeof EN[k] === "string" && EN[k].trim()));
 assert.deepEqual(missing, [], "missing English translations");
 
