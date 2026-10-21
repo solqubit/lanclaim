@@ -1,6 +1,6 @@
 # Modelo de dominio propuesto
 
-Modelo lógico independiente del lenguaje, framework y motor de base de datos. Las tablas siguientes describen entidades y reglas; todavía no son un esquema implementado.
+Modelo implementado con Python y SQLite. `lanclaim/db.py` contiene el esquema y la migración a versión 2, las transacciones y restricciones de integridad. La tabla `observations` conserva el último resultado ICMP por dirección sin modificar reclamaciones ni asignaciones.
 
 ## Separar pertenencia, asignación y observación
 
@@ -16,12 +16,12 @@ Una revisión puede coexistir con una asignación activa. En ese caso la interfa
 | Entidad | Datos principales y relaciones |
 | --- | --- |
 | IP reclamada | ID estable, dirección normalizada, familia IP, fecha de reclamación y notas. |
-| Máquina | ID estable, nombre, descripción, SO, hostname, MAC, plataforma, ID de VM, etiquetas, notas, ciclo de vida y fecha de retirada. |
+| Máquina | ID estable, nombre, descripción, SO, hostname, MAC, plataforma, ID de VM, etiquetas, notas, ciclo de vida (activa, en reinstalación, retirada) y fecha de retirada. |
 | Asignación | ID, IP, máquina, inicio, fin opcional, motivo de asignación y motivo de liberación. Fin ausente significa asignación activa. |
 | Planificación | ID, IP, destino previsto, notas, fecha de creación, estado abierto/ejecutado/cancelado y fecha de cierre. |
 | Revisión | ID, IP, motivo, evidencia, fecha de apertura, fecha de resolución y decisión tomada. Puede referenciar la asignación afectada. |
 | Evento de historial | ID, tipo de operación, fecha, referencias estables a IP/máquina/asignación/plan/revisión y cambios relevantes. |
-| Observación de red (posterior) | IP observada, IP reclamada relacionada si existe, fecha, método, resultado de conectividad y atributos detectados. |
+| Última observación de red | Dirección normalizada, resultado ICMP (`responding` o `no_response`) y fecha UTC. Puede existir sin reclamación. Los atributos de identidad y el historial de sondeos quedan para una fase posterior. |
 
 El alcance inicial es un espacio personal. Si se incorporan redes aisladas con direcciones repetidas, se añadirá un ámbito explícito de red a la identidad y a las restricciones de unicidad antes de permitir esos duplicados.
 
@@ -64,6 +64,9 @@ Una IP es reutilizable cuando es asignable y tiene al menos una asignación hist
 | Asignar | IP disponible y máquina activa. | Asignación abierta. |
 | Liberar | Asignación activa. | Asignación cerrada; disponible salvo revisión abierta. |
 | Retirar máquina | Máquina activa. | Máquina retirada; todas sus asignaciones cerradas, sin borrar revisiones. |
+| Iniciar reinstalación | Máquina activa. | Misma máquina en reinstalación; se conservan todas sus asignaciones. |
+| Finalizar reinstalación | Máquina en reinstalación. | Máquina activa con las mismas asignaciones. |
+| Reactivar máquina | Máquina retirada. | Máquina activa; sus asignaciones anteriores permanecen cerradas. |
 | Abrir revisión | IP reclamada. | Revisión abierta; vínculo o plan existente conservado. |
 | Resolver revisión | Evidencia y decisión registradas. | Revisión cerrada; se recalcula el estado a partir de los vínculos restantes. |
 | Registrar conectividad | Comprobación efectuada. | Nueva observación; ningún cambio de asignación. |
@@ -74,6 +77,19 @@ Corregir una asignación durante una revisión requiere una acción administrati
 
 Los cuatro estados visibles forman una partición: disponibles + planificadas + asignadas sin revisión + pendientes de revisión = total de IP reclamadas.
 
-La métrica **Con asignación activa** incluirá también las asignadas que estén pendientes de revisión, porque siguen vinculadas a una máquina. Se indicará cuántas de ellas requieren revisión. Del mismo modo, la consulta de planes incluirá los planes abiertos con revisión.
+La métrica **Asignadas** incluirá también las asignadas que estén pendientes de revisión, porque siguen vinculadas a una máquina. Se indicará cuántas de ellas requieren revisión. Del mismo modo, la consulta de planes incluirá los planes abiertos con revisión.
 
 La interfaz no presentará estos totales solapados como categorías sumables. Las consultas de disponibilidad usarán exclusivamente la regla de asignable, y las de reutilización su subconjunto histórico.
+
+## Reinstalación y vista de red
+
+Una máquina en reinstalación conserva sus vínculos, pero no recibe asignaciones nuevas hasta finalizar el mantenimiento. Puede retirarse explícitamente si el mantenimiento termina en una retirada definitiva. Los datos de identidad se editan desde su ficha sin crear una máquina nueva.
+
+Mi red enumera un rango o CIDR y relaciona sus direcciones con el inventario existente. Las sugerencias proceden de las interfaces locales del servidor; no se hacen sondeos al abrir la página ni al elegir un rango. El botón Escanear red inicia explícitamente comprobaciones ICMP acotadas, con progreso y cancelación. Solo la confirmación de las direcciones seleccionadas crea reclamaciones. La última red consultada y el idioma se recuerdan en el navegador; el inventario y su historial permanecen en SQLite.
+
+
+## Guardar equipo desde una IP
+
+`save_ip_machine` reclama una IP si hace falta y crea/asocia su equipo en una sola transacción. La interfaz pide únicamente un nombre para un equipo nuevo; los datos adicionales son opcionales. También permite elegir un equipo ya registrado, editar el equipo actual o cambiar el equipo de una sola IP. Cambiar no retira al anterior ni altera sus otras direcciones.
+
+La petición incluye el identificador esperado de la asignación (o `null` si no existía). Si cambió, se rechaza para no sobrescribir otra operación. Una reserva requiere su identificador de plan al asignar; una revisión abierta impide crear la nueva asignación. Cualquier error revierte reclamación, equipo, liberación y eventos juntos. La edición mantiene la identidad y las asignaciones, incluso durante reinstalación.

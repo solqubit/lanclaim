@@ -1,6 +1,6 @@
 # Orden de implementación y aceptación
 
-Todo lo descrito aquí está pendiente de implementación. El orden evita que el descubrimiento condicione o retrase la utilidad del inventario.
+Estado de la versión 0.1.0: implementados el núcleo persistente y la interfaz de las fases 1 y 2, además de Mi red, reinstalación conservando IPs e interfaz ES/EN. Los scripts de la fase 3 están implementados y probados en un contenedor aislado con adaptador de servicio; falta certificar el despliegue con systemd real y la matriz de distribuciones. Las fases 4 y 5 tienen un primer escaneo ICMP manual con resultados fechados, filtro de activas y reclamación voluntaria. Siguen pendientes las comprobaciones periódicas, la identificación de equipos y la apertura automática de discrepancias. Consulta VERIFICACION.md para el alcance exacto de las pruebas.
 
 ## Fase 1. Núcleo IPAM persistente
 
@@ -71,7 +71,7 @@ Condiciones de aceptación:
 
 - Una IP externa descubierta no aumenta el total reclamado hasta que el usuario la incorpore.
 - Reclamar un resultado ya administrado no duplica registros ni modifica sus vínculos existentes.
-- El descubrimiento no desplaza Mi espacio de IPs como pantalla principal.
+- La entrada Red reúne consulta y escaneo por petición del usuario; Mis IPs sigue disponible sin dependencia del escaneo. No hay sondeos automáticos al abrir la aplicación.
 
 ## Escenarios de referencia para pruebas de dominio
 

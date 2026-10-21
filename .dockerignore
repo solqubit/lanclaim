@@ -1,0 +1,5 @@
+.git
+data
+.test-artifacts
+**/__pycache__
+*.sqlite3*

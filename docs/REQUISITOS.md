@@ -37,7 +37,7 @@ Cada máquina tendrá un identificador estable y estos campos:
 
 El nombre será obligatorio. Los demás datos podrán completarse progresivamente; registrar una máquina no dependerá de descubrirla en la red.
 
-Una máquina podrá tener varias direcciones IP y existir temporalmente sin ninguna. Su ficha mostrará asignaciones actuales, asignaciones anteriores y estado de ciclo de vida: activa o retirada. Activa significa que pertenece a la infraestructura vigente, no que esté encendida.
+Una máquina podrá tener varias direcciones IP y existir temporalmente sin ninguna. Su ficha mostrará asignaciones actuales, asignaciones anteriores y estado de ciclo de vida: activa, en reinstalación o retirada. Activa significa que pertenece a la infraestructura vigente, no que esté encendida.
 
 La MAC y el hostname son atributos editables, no identificadores internos permanentes. No se supondrá que una máquina con varias interfaces utiliza la misma MAC para todas sus IP.
 
@@ -65,13 +65,19 @@ La acción de retirada mostrará las IP que se liberarán y permitirá registrar
 
 Retirar en LanClaim documenta una retirada de infraestructura; no elimina ni apaga la VM o el equipo real. Las máquinas retiradas no admitirán nuevas asignaciones mientras permanezcan en ese estado.
 
+### Reinstalar o formatear
+
+La acción «Reinstalar / formatear» conservará la ficha, el identificador interno y todas las IP asignadas. Registrará motivo y fecha, y mostrará el estado «En reinstalación». Al finalizar, el usuario podrá devolverla a activa y actualizar SO, hostname, MAC y demás datos desde la misma ficha. No se ejecutarán operaciones de formateo reales sobre el equipo.
+
+Una IP que solo se reclama y todavía no se utiliza permanecerá disponible. No es necesario crear una máquina para conservarla.
+
 ### Conectividad
 
 Una máquina apagada, sin respuesta o no detectada conservará sus asignaciones. No habrá temporizadores de caducidad ni liberaciones automáticas basadas en ping, último avistamiento, reinicio o ausencia de resultados.
 
 ## 4. Dashboard y navegación
 
-La pantalla inicial se llamará **Mi espacio de IPs** y funcionará sin escaneos previos. Tendrá acceso directo a reclamar IPs, registrar máquinas, planificar y asignar.
+La interfaz será minimalista: navegación superior con **Red**, **Mis IPs**, **Máquinas** e **Historial**, tablas compactas y detalles bajo demanda. La vista inicial **Red** permite elegir un rango, escanearlo explícitamente y reclamar direcciones. **Mis IPs** conserva el papel de administrador personal y funciona sin escaneos previos, con acceso a reclamar, planificar y asignar. Registrar máquinas está disponible en su pestaña.
 
 | Pregunta | Respuesta en la interfaz |
 | --- | --- |
@@ -85,7 +91,9 @@ La pantalla inicial se llamará **Mi espacio de IPs** y funcionará sin escaneos
 
 La lista de IPs mostrará dirección, estado administrativo, máquina o destino planificado y señal de revisión. La conectividad será un dato complementario con fecha de comprobación; nunca sustituirá el estado administrativo.
 
-La navegación priorizará Mi espacio de IPs, Máquinas e Historial. Verificaciones y descubrimiento aparecerán como funciones secundarias cuando se implementen. El estado vacío invitará a reclamar IPs o registrar una máquina.
+La navegación priorizará Mi espacio de IPs, Mi red, Máquinas e Historial. Mi red listará las direcciones de una subred o rango y permitirá seleccionarlas para reclamar; mostrará cuáles ya están administradas y sus estados. Esta enumeración no implica detectar equipos activos. Verificaciones y descubrimiento aparecerán como funciones secundarias cuando se implementen.
+
+La interfaz ofrecerá Español e English, manteniendo sin traducir el contenido introducido por el usuario. El diseño será oscuro con inspiración de terminal, texto de alto contraste y colores diferenciados por estado; no dependerá únicamente del color para comunicar estados.
 
 ## 5. Historial
 
@@ -115,3 +123,8 @@ El descubrimiento fuera del inventario será una acción secundaria y explícita
 - Código, configuración, base de datos y copias tendrán ubicaciones definidas. Reiniciar, actualizar o reinstalar conservando datos no perderá inventario ni historial.
 
 La matriz de distribuciones, el mecanismo de servicio y los detalles de despliegue se fijarán y comprobarán durante la implementación. No se declara soporte probado en esta fase documental.
+
+
+## Interacción centrada en la IP
+
+La IP es el punto de entrada para registrar su equipo, editarlo, cambiarlo, guardar la dirección para después, marcar reinstalación y liberar su asignación. No se requiere crear una máquina en otra pantalla. La pestaña Máquinas es un resumen complementario. Cada acción explica sus consecuencias; historial, notas y opciones menos frecuentes se pliegan. Se mantiene la distribución con navegación superior y tablas, con un acabado oscuro neutro y acentos discretos.
