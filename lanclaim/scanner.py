@@ -1,4 +1,4 @@
-"""Manual, bounded ICMP checks. Observations never change IP ownership."""
+"""Ping periódico de las direcciones vigiladas. Las observaciones nunca cambian el inventario."""
 import ipaddress
 import logging
 import os
@@ -9,32 +9,15 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from .db import Invalid, addresses, now
+from .db import Invalid, now
 
+log = logging.getLogger(__name__)
 
 PING_PERMISSION_ERROR = 'El servicio no tiene permisos para usar ping. Actualiza LanClaim para reparar los permisos del servicio.'
 PING_TIMEOUT_ERROR = 'Ping no terminó a tiempo. Revisa la carga y la red del servidor.'
 PING_NETWORK_ERROR = 'El servidor no tiene una ruta hacia esa red. Revisa su interfaz, gateway o red virtual.'
-
-
-def scan_addresses(raw):
-    targets = addresses(raw)
-    if any(ipaddress.ip_address(a).version != 4 for a in targets):
-        raise Invalid('El escaneo admite solamente IPv4.')
-    if len(targets) > 1024:
-        raise Invalid('Escanea hasta 1024 direcciones por operación.')
-    excluded = set()
-    for token in re.split(r'[,;\s]+', re.sub(r'\s*-\s*', '-', raw.strip())):
-        if '/' in token:
-            network = ipaddress.ip_network(token, strict=False)
-            if network.prefixlen < 31:
-                excluded.update((str(network.network_address), str(network.broadcast_address)))
-    targets = [a for a in targets if a not in excluded]
-    if not targets or any(ipaddress.ip_address(a).is_multicast or
-                          ipaddress.ip_address(a).is_unspecified or a == '255.255.255.255'
-                          for a in targets):
-        raise Invalid('Selecciona direcciones IPv4 de equipos, sin multicast ni broadcast.')
-    return targets
+GENERIC_ERROR = 'No se pudo completar el escaneo. Revisa el registro del servicio.'
+BATCH = 64
 
 
 def ping(address):
@@ -75,70 +58,98 @@ def ping(address):
 
 
 class Scanner:
-    def __init__(self, store, probe=ping):
+    def __init__(self, store, probe=ping, interval=300, workers=32):
         self.store, self.probe = store, probe
-        self.lock = threading.RLock()
-        self.cancelled = threading.Event()
-        self.thread = None
-        self.job = {'status': 'idle', 'total': 0, 'completed': 0, 'responding': 0, 'error': ''}
+        self.interval, self.workers = interval, workers
+        self.lock = threading.Lock()
+        self.stopping = threading.Event()
+        self.loop = None
+        self.worker = None
+        self.job = {'running': False, 'total': 0, 'done': 0, 'finished_at': None, 'error': ''}
 
-    def snapshot(self):
+    def status(self):
         with self.lock:
-            return {'scan': dict(self.job), 'observations': self.store.observations()}
-
-    def start(self, raw):
-        targets = scan_addresses(raw)
-        with self.lock:
-            if self.job['status'] in ('running', 'cancelling'):
-                raise Invalid('Ya hay un escaneo en curso.')
-            self.cancelled.clear()
-            self.job = {'status': 'running', 'range': raw, 'total': len(targets),
-                        'completed': 0, 'responding': 0, 'started_at': now(), 'error': ''}
-            self.thread = threading.Thread(target=self._run, args=(targets,), daemon=True)
-            self.thread.start()
             return dict(self.job)
 
-    def cancel(self):
+    def start(self):
+        if self.interval > 0 and self.loop is None:
+            self.loop = threading.Thread(target=self._loop, name='lanclaim-scan-loop', daemon=True)
+            self.loop.start()
+
+    def scan_now(self):
         with self.lock:
-            if self.job['status'] == 'running':
-                self.job['status'] = 'cancelling'
-                self.cancelled.set()
+            if not self.job['running'] and not self.stopping.is_set():
+                self._begin()
+                self.worker = threading.Thread(target=self._cycle, name='lanclaim-scan', daemon=True)
+                self.worker.start()
             return dict(self.job)
 
     def close(self):
-        self.cancel()
-        if self.thread:
-            self.thread.join(timeout=6)
+        self.stopping.set()
+        for thread in (self.loop, self.worker):
+            if thread is not None:
+                thread.join(timeout=6)
 
-    def _run(self, targets):
-        pending = iter(targets)
+    def _begin(self):
+        self.job.update(running=True, total=0, done=0)
 
-        def worker():
-            while True:
-                with self.lock:
-                    if self.cancelled.is_set():
-                        return
-                    address = next(pending, None)
-                if address is None:
-                    return
-                status = self.probe(address)
-                with self.lock:
-                    self.store.observe(address, status)
-                    self.job['completed'] += 1
-                    self.job['responding'] += status == 'responding'
+    def _loop(self):
+        while not self.stopping.is_set():
+            with self.lock:
+                idle = not self.job['running']
+                if idle:
+                    self._begin()
+            if idle:
+                self._cycle()
+            self.stopping.wait(self.interval)
 
-        def guarded_worker():
-            try:
-                worker()
-            except Exception as exc:
-                with self.lock:
-                    self.job['error'] = str(exc) if isinstance(exc, Invalid) else 'No se pudo guardar el resultado del escaneo.'
-                    self.cancelled.set()
+    def _cycle(self):
+        error = ''
+        try:
+            targets = self.store.watched_addresses()
+            with self.lock:
+                self.job['total'] = len(targets)
+            failed = threading.Event()
+            pending, pending_lock = iter(targets), threading.Lock()
 
-        with ThreadPoolExecutor(max_workers=16) as pool:
-            futures = [pool.submit(guarded_worker) for _ in range(min(16, len(targets)))]
-            for future in futures:
-                future.result()
+            def work():
+                batch = {}
+                while not failed.is_set() and not self.stopping.is_set():
+                    with pending_lock:
+                        address = next(pending, None)
+                    if address is None:
+                        break
+                    batch[address] = self.probe(address) == 'responding'
+                    if len(batch) >= BATCH:
+                        self._save(batch)
+                        batch = {}
+                if batch:
+                    self._save(batch)
+
+            def guarded():
+                try:
+                    work()
+                except Exception:
+                    failed.set()
+                    raise
+
+            with ThreadPoolExecutor(max_workers=max(1, min(self.workers, len(targets)))) as pool:
+                futures = [pool.submit(guarded) for _ in range(min(self.workers, len(targets)))]
+                for future in futures:
+                    exc = future.exception()
+                    if exc is not None and not error:
+                        error = str(exc) if isinstance(exc, Invalid) else GENERIC_ERROR
+                        if not isinstance(exc, Invalid):
+                            log.error('Escaneo fallido: %s', type(exc).__name__, exc_info=exc)
+        except Exception as exc:
+            error = GENERIC_ERROR
+            log.error('Escaneo fallido: %s', type(exc).__name__, exc_info=exc)
         with self.lock:
-            self.job['status'] = 'failed' if self.job['error'] else 'cancelled' if self.cancelled.is_set() else 'completed'
-            self.job['finished_at'] = now()
+            if error and error != self.job['error']:
+                log.warning('%s', error)
+            self.job.update(running=False, finished_at=now(), error=error)
+
+    def _save(self, batch):
+        self.store.record_observations(batch, now())
+        with self.lock:
+            self.job['done'] += len(batch)
