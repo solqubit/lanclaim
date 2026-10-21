@@ -2,10 +2,12 @@ import http.client
 import json
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
 from lanclaim.db import Store
+from lanclaim.scanner import Scanner
 from lanclaim.server import Server
 
 
@@ -13,7 +15,9 @@ class HttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
-        cls.server = Server(('127.0.0.1', 0), Store(Path(cls.temp.name) / 'db.sqlite3'))
+        store = Store(Path(cls.temp.name) / 'db.sqlite3')
+        scanner = Scanner(store, probe=lambda address: 'responding', interval=0)
+        cls.server = Server(('127.0.0.1', 0), store, scanner)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
 
@@ -33,53 +37,100 @@ class HttpTests(unittest.TestCase):
         connection.close()
         return result
 
-    def test_serves_app_with_security_headers(self):
+    def post(self, path, data):
+        headers = {'X-CSRF-Token': self.server.csrf, 'Content-Type': 'application/json'}
+        code, _, body = self.request(path, 'POST', data, headers)
+        return code, json.loads(body)
+
+    def test_serves_shell_and_modules(self):
         code, headers, body = self.request('/')
         self.assertEqual(code, 200)
-        self.assertIn('Mi espacio de IPs'.encode(), body)
-        self.assertIn("frame-ancestors 'none'", headers['Content-Security-Policy'])
-        for asset in ('app.js', 'i18n.js', 'style.css', 'favicon.svg'):
-            self.assertEqual(self.request('/' + asset)[0], 200)
+        self.assertIn(b'<script type="module" src="/js/main.js">', body)
+        self.assertTrue(headers['Content-Type'].startswith('text/html'))
+        code, headers, _ = self.request('/js/model.js')
+        self.assertEqual(code, 200)
+        self.assertTrue(headers['Content-Type'].startswith('text/javascript'))
+        self.assertEqual(self.request('/css/app.css')[0], 200)
+        self.assertEqual(self.request('/favicon.svg')[0], 200)
+        for path in ('/js/package.json', '/../db.py', '/js/%2e%2e/%2e%2e/db.py', '/js/../../server.py',
+                     '/js/', '/data/lanclaim.sqlite3', '/app.js', '/unknown'):
+            with self.subTest(path=path):
+                self.assertEqual(self.request(path)[0], 404)
 
-    def test_denies_cross_site_and_unknown_host(self):
+    def test_security_headers_and_csrf(self):
+        _, headers, _ = self.request('/')
+        self.assertIn("frame-ancestors 'none'", headers['Content-Security-Policy'])
+        self.assertEqual(headers['X-Content-Type-Options'], 'nosniff')
+        self.assertEqual(self.request('/api/ips/claim', 'POST', {'addresses': '10.0.0.1'},
+                                      {'Content-Type': 'application/json'})[0], 403)
+        self.assertEqual(self.request('/api/ips/claim', 'POST', {'addresses': '10.0.0.1'},
+                                      {'X-CSRF-Token': self.server.csrf})[0], 415)
         for headers in ({'Host': 'evil.example'}, {'Origin': 'https://evil.example'}, {'Sec-Fetch-Site': 'cross-site'}):
             self.assertEqual(self.request('/api/state', headers=headers)[0], 403)
 
-    def test_post_requires_csrf_and_json(self):
-        self.assertEqual(self.request('/api/commands/claim', 'POST', {'addresses': '10.0.0.1'})[0], 403)
-        headers = {'X-CSRF-Token': self.server.csrf}
-        self.assertEqual(self.request('/api/commands/claim', 'POST', {}, headers)[0], 415)
+    def test_state_shape(self):
+        code, _, body = self.request('/api/state')
+        state = json.loads(body)
+        self.assertEqual(code, 200)
+        for key in ('networks', 'ips', 'devices', 'observations', 'scan', 'csrf', 'version'):
+            self.assertIn(key, state)
+        self.assertEqual(state['version'], '2.0.0')
 
-    def test_json_commands_and_history(self):
-        headers = {'X-CSRF-Token': self.server.csrf, 'Content-Type': 'application/json'}
-        result = self.request('/api/commands/claim', 'POST', {'addresses': '10.2.3.4'}, headers)
-        self.assertEqual(result[0], 200)
+    def test_mutation_returns_state(self):
+        code, state = self.post('/api/ips/claim', {'addresses': '192.168.50.10',
+                                                   'device': {'name': 'glpi', 'type': 'vm'}})
+        self.assertEqual(code, 200)
+        ip = next(i for i in state['ips'] if i['address'] == '192.168.50.10')
+        device = next(d for d in state['devices'] if d['name'] == 'glpi')
+        self.assertEqual(ip['device_id'], device['id'])
+        self.assertIn('csrf', state)
+        code, state = self.post('/api/devices/update', {'id': device['id'], 'name': 'glpi', 'type': 'vm', 'os': 'Debian 12',
+                                                        'note': '', 'addresses': ['192.168.50.10', '192.168.50.11']})
+        self.assertEqual(code, 200)
+        self.assertEqual(len([i for i in state['ips'] if i['device_id'] == device['id']]), 2)
+        code, state = self.post('/api/ips/note', {'address': '192.168.50.11', 'note': 'hola'})
+        self.assertEqual(code, 200)
+        code, state = self.post('/api/ips/unassign', {'addresses': ['192.168.50.11']})
+        code, state = self.post('/api/ips/release', {'addresses': ['192.168.50.11']})
+        self.assertNotIn('192.168.50.11', [i['address'] for i in state['ips']])
+        code, state = self.post('/api/devices/delete', {'id': device['id']})
+        self.assertEqual((code, state['devices']), (200, []))
+
+    def test_network_routes(self):
+        code, state = self.post('/api/networks/add', {'cidr': '172.20.0.0/28', 'name': 'Lab'})
+        self.assertEqual(code, 200)
+        net = next(n for n in state['networks'] if n['cidr'] == '172.20.0.0/28')
+        code, state = self.post('/api/networks/rename', {'id': net['id'], 'name': 'Lab 2'})
+        self.assertEqual(next(n for n in state['networks'] if n['id'] == net['id'])['name'], 'Lab 2')
+        code, state = self.post('/api/networks/remove', {'id': net['id']})
+        self.assertNotIn(net['id'], [n['id'] for n in state['networks']])
+        code, _, body = self.request('/api/suggestions')
+        self.assertEqual(code, 200)
+        self.assertIsInstance(json.loads(body)['networks'], list)
+
+    def test_scan_now(self):
+        self.post('/api/networks/add', {'cidr': '172.21.0.0/30'})
+        code, state = self.post('/api/scan/now', {})
+        self.assertEqual(code, 200)
+        deadline = time.monotonic() + 5
+        while self.server.scanner.status()['running'] and time.monotonic() < deadline:
+            time.sleep(0.02)
         state = json.loads(self.request('/api/state')[2])
-        self.assertEqual(state['counts']['claimed'], 1)
-        events = json.loads(self.request('/api/history?ip_id=1')[2])['events']
-        self.assertEqual(events[0]['kind'], 'claimed')
+        self.assertTrue(state['observations']['172.21.0.1']['up'])
 
-    def test_invalid_body_and_path_do_not_mutate(self):
+    def test_invalid_is_400(self):
+        code, body = self.post('/api/networks/add', {'cidr': '10.0.0.0/8'})
+        self.assertEqual(code, 400)
+        self.assertIn('/22', body['error'])
+        self.assertEqual(self.post('/api/ips/claim', {'addresses': 'nope'})[0], 400)
+        self.assertEqual(self.post('/api/devices/delete', {'id': 'x'})[0], 400)
         headers = {'X-CSRF-Token': self.server.csrf, 'Content-Type': 'application/json'}
-        self.assertEqual(self.request('/api/commands/claim', 'POST', [], headers)[0], 400)
-        self.assertEqual(self.request('/api/history?ip_id=nope')[0], 400)
-        for path in ('/../lanclaim/db.py', '/data/lanclaim.sqlite3', '/unknown'):
-            self.assertEqual(self.request(path)[0], 404)
+        self.assertEqual(self.request('/api/ips/claim', 'POST', [], headers)[0], 400)
 
-    def test_scan_api_auth_validation_and_results(self):
-        headers = {'X-CSRF-Token': self.server.csrf, 'Content-Type': 'application/json'}
-        self.assertEqual(self.request('/api/scans/start', 'POST', {'addresses': '127.0.0.1'})[0], 403)
-        self.assertEqual(self.request('/api/scans/cancel', 'POST', {})[0], 403)
-        self.assertEqual(self.request('/api/scans/start', 'POST', [], headers)[0], 400)
-        self.assertEqual(self.request('/api/scans/start', 'POST', {'addresses': '::1'}, headers)[0], 400)
-        before = self.server.store.snapshot()
-        self.server.scanner.probe = lambda address: 'responding'
-        self.assertEqual(self.request('/api/scans/start', 'POST', {'addresses': '127.0.0.1'}, headers)[0], 200)
-        self.server.scanner.thread.join(3)
-        result = json.loads(self.request('/api/scans')[2])
-        self.assertEqual(result['scan']['status'], 'completed')
-        self.assertEqual(result['observations'][0]['status'], 'responding')
-        self.assertEqual(before, self.server.store.snapshot())
+    def test_unknown_route_404(self):
+        self.assertEqual(self.post('/api/ips/explode', {})[0], 404)
+        self.assertEqual(self.post('/api/commands/claim', {})[0], 404)
+        self.assertEqual(self.request('/api/nothing')[0], 404)
 
 
 if __name__ == '__main__':

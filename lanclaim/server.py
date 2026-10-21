@@ -8,26 +8,45 @@ import secrets
 import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 from . import __version__
 from .db import Invalid, Store
 from .networks import local_networks
 from .scanner import Scanner
 
-STATIC = Path(__file__).parent / 'static'
+STATIC = (Path(__file__).parent / 'static').resolve()
+MIME = {'.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
+        '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml'}
 
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, store):
+    def __init__(self, address, store, scanner=None):
         self.store = store
-        self.scanner = Scanner(store)
+        self.scanner = scanner or Scanner(store)
         self.csrf = secrets.token_urlsafe(32)
         self.allowed_hosts = {'localhost', socket.gethostname().lower(), socket.getfqdn().lower()}
         self.allowed_hosts.update(h.strip().lower() for h in os.getenv('LANCLAIM_ALLOWED_HOSTS', '').split(',') if h.strip())
         super().__init__(address, Handler)
+        store, scanner = self.store, self.scanner
+        self.actions = {
+            'networks/add': lambda d: store.add_network(d.get('cidr'), d.get('name', '')),
+            'networks/rename': lambda d: store.rename_network(d.get('id'), d.get('name', '')),
+            'networks/remove': lambda d: store.remove_network(d.get('id')),
+            'ips/claim': lambda d: store.claim(d.get('addresses'), d.get('device')),
+            'ips/release': lambda d: store.release(d.get('addresses')),
+            'ips/unassign': lambda d: store.unassign(d.get('addresses')),
+            'ips/note': lambda d: store.set_note(d.get('address'), d.get('note', '')),
+            'devices/create': lambda d: store.create_device(d, d.get('addresses')),
+            'devices/update': lambda d: store.update_device(d.get('id'), d, d.get('addresses')),
+            'devices/delete': lambda d: store.delete_device(d.get('id')),
+            'scan/now': lambda d: scanner.scan_now(),
+        }
+
+    def state(self):
+        return {**self.store.state(), 'scan': self.scanner.status(), 'csrf': self.csrf, 'version': __version__}
 
     def get_request(self):
         connection, address = super().get_request()
@@ -72,6 +91,18 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
+    def static_file(self, path):
+        if path == '/':
+            path = '/index.html'
+        if not (path == '/index.html' or path == '/favicon.svg' or path.startswith(('/css/', '/js/'))):
+            return None
+        try:
+            candidate = (STATIC / path.lstrip('/')).resolve()
+            candidate.relative_to(STATIC)
+        except (ValueError, OSError):
+            return None
+        return candidate if candidate.suffix in MIME and candidate.is_file() else None
+
     def do_GET(self):
         if not self.trusted_request():
             return self.send(403, {'error': 'Origen o Host no permitido.'})
@@ -80,23 +111,12 @@ class Handler(BaseHTTPRequestHandler):
             if route.path == '/api/health':
                 return self.send(200, {'ok': True, 'version': __version__})
             if route.path == '/api/state':
-                return self.send(200, {**self.server.store.snapshot(), 'csrf': self.server.csrf, 'version': __version__})
-            if route.path == '/api/networks':
+                return self.send(200, self.server.state())
+            if route.path == '/api/suggestions':
                 return self.send(200, {'networks': local_networks()})
-            if route.path == '/api/scans':
-                return self.send(200, self.server.scanner.snapshot())
-            if route.path == '/api/history':
-                query = parse_qs(route.query)
-                args = {key: int(query[key][0]) for key in ('ip_id', 'machine_id', 'before') if key in query}
-                return self.send(200, {'events': self.server.store.history(**args)})
-            files = {'/': ('index.html', 'text/html; charset=utf-8'),
-                     '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
-                     '/i18n.js': ('i18n.js', 'text/javascript; charset=utf-8'),
-                     '/style.css': ('style.css', 'text/css; charset=utf-8'),
-                     '/favicon.svg': ('favicon.svg', 'image/svg+xml')}
-            if route.path in files:
-                name, mime = files[route.path]
-                return self.send(200, (STATIC / name).read_bytes(), mime)
+            static = self.static_file(route.path)
+            if static:
+                return self.send(200, static.read_bytes(), MIME[static.suffix])
             return self.send(404, {'error': 'No encontrado.'})
         except (Invalid, ValueError) as exc:
             return self.send(400, {'error': str(exc)})
@@ -118,14 +138,11 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise Invalid('Se esperaba un objeto JSON.')
             path = urlsplit(self.path).path
-            if path == '/api/scans/start':
-                return self.send(200, {'scan': self.server.scanner.start(data.get('addresses'))})
-            if path == '/api/scans/cancel':
-                return self.send(200, {'scan': self.server.scanner.cancel()})
-            if not path.startswith('/api/commands/'):
+            action = self.server.actions.get(path.removeprefix('/api/')) if path.startswith('/api/') else None
+            if action is None:
                 return self.send(404, {'error': 'No encontrado.'})
-            action = path.removeprefix('/api/commands/')
-            return self.send(200, self.server.store.command(action, data))
+            action(data)
+            return self.send(200, self.server.state())
         except (Invalid, ValueError, TypeError) as exc:
             return self.send(400, {'error': str(exc)})
         except Exception as exc:
@@ -138,13 +155,16 @@ def main():
     parser.add_argument('--host', default=os.getenv('LANCLAIM_HOST', '127.0.0.1'))
     parser.add_argument('--port', type=int, default=int(os.getenv('LANCLAIM_PORT', '8080')))
     parser.add_argument('--data-dir', default=os.getenv('LANCLAIM_DATA_DIR', str(Path.cwd() / 'data')))
+    parser.add_argument('--scan-interval', type=int, default=int(os.getenv('LANCLAIM_SCAN_INTERVAL', '300')),
+                        help='Segundos entre pings automáticos (0 los desactiva)')
     parser.add_argument('--backup', help='Crear una copia consistente y salir')
     args = parser.parse_args()
     store = Store(Path(args.data_dir) / 'lanclaim.sqlite3')
     if args.backup:
         store.backup(args.backup)
         return
-    server = Server((args.host, args.port), store)
+    server = Server((args.host, args.port), store, Scanner(store, interval=max(0, args.scan_interval)))
+    server.scanner.start()
     print(f'LanClaim {__version__} — http://{args.host}:{server.server_port}', flush=True)
     try:
         server.serve_forever()
