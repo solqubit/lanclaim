@@ -509,6 +509,15 @@ Object.assign(english, {
   "Nota del cambio (opcional)": "Change note (optional)",
   "Cambio de equipo desde la IP.": "Device changed from the IP page.",
 });
+Object.assign(english, {
+  "Cerrar detalles": "Close details",
+  "Equipo / IP": "Device / IP",
+  "Buscar IP o equipo…": "Search IP or device…",
+  Detalles: "Details",
+  "← Volver a la IP": "← Back to IP",
+  "← Volver": "← Back",
+  "← Volver a la lista": "← Back to list",
+});
 const translationPattern = new RegExp(
   Object.keys(english)
     .sort((a, b) => b.length - a.length)
@@ -542,7 +551,7 @@ document.addEventListener("DOMContentLoaded", () => {
   for (const node of nodes)
     if (
       !["SCRIPT", "STYLE", "OPTION"].includes(node.parentElement.tagName) &&
-      !node.parentElement.closest("#content,#stats,#dialog-body,#toast")
+      !node.parentElement.closest("#content,#stats,#inspector-body,#toast")
     )
       node.nodeValue = t(node.nodeValue);
   document

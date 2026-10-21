@@ -8,6 +8,7 @@ LanClaim manages the addresses you claim. Claiming an IP adds it to your invento
 
 - Open **Network**, choose a server interface or enter a range, and scan for ICMP replies. Filter responding addresses and claim them directly from the table.
 - Open any IP and enter a device name to claim, register and assign in one save. Reuse an existing device, edit its details, reinstall it or replace just this IP’s assignment without leaving the IP. Optional fields stay collapsed and each action explains its effect.
+- See device/VM names prominently above their IP addresses in both Network and My IPs, and search the network list by name. Details and forms open in an inline side panel with Back, Cancel and Escape navigation; the address list stays accessible.
 - Use **My IPs**, **Machines** and **History** through a compact top navigation; counts stay small and machine details open on demand.
 - Claim individual IPv4/IPv6 addresses, ranges or complete CIDRs, with duplicate detection and a 4096-address batch limit.
 - Track available, planned, assigned and review-required addresses; filter reusable IPs.

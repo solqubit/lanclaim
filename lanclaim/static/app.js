@@ -82,6 +82,12 @@ const machineLink = (id) =>
 const ipLink = (id) =>
   `<button class="link-button ip-address" data-action="ip-detail" data-id="${id}">${esc(ipById(id)?.address || "IP")}</button>`;
 
+function addressIdentity(address, ip) {
+  const device = ip?.assignment && machine(ip.assignment.machine_id);
+  const name = device?.name || ip?.plan?.target;
+  return `<button class="link-button address-identity" data-open-address="${esc(address)}">${name ? `<span class="device-name">${esc(name)}</span><span class="address-secondary">${esc(address)}</span>` : `<span class="ip-address">${esc(address)}</span><span class="subtext">${esc(t("Sin equipo asignado"))}</span>`}</button>`;
+}
+
 async function api(path, body) {
   const options =
     body === undefined
@@ -151,6 +157,7 @@ function empty(title, text, buttons = "") {
   return `<div class="empty"><span class="empty-symbol" aria-hidden="true">▦</span><h3>${esc(title)}</h3><p>${esc(text)}</p><div class="actions">${buttons}</div></div>`;
 }
 function navigate(next, nextFilter = "all") {
+  closeInspector();
   pageGeneration++;
   view = next;
   filter = nextFilter;
@@ -239,10 +246,12 @@ async function discoverNetworks() {
   }
 }
 function networkVisible() {
-  const claimed = new Set(state.ips.map((ip) => ip.address));
+  const claimed = new Map(state.ips.map((ip) => [ip.address, ip]));
   return networkAddresses.filter(
     (a) =>
-      a.includes(query.trim()) &&
+      `${a} ${machine(claimed.get(a)?.assignment?.machine_id)?.name || ""} ${claimed.get(a)?.plan?.target || ""}`
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()) &&
       (filter === "all" ||
         (filter === "responding"
           ? observations.get(a)?.status === "responding"
@@ -279,7 +288,7 @@ async function pollScan() {
       // Keep typing and selections stable while checks arrive.
       if (
         !document.activeElement?.matches("input,select") &&
-        !$("#dialog").open
+        $("#inspector").hidden
       ) {
         const focused = document.activeElement;
         const focusSelector =
@@ -386,8 +395,8 @@ function renderNetwork() {
           id="search"
           type="search"
           value="${esc(query)}"
-          placeholder="Buscar IP…"
-          aria-label="Buscar IP…"
+          placeholder="Buscar IP o equipo…"
+          aria-label="Buscar IP o equipo…"
         />
         <button
           class="secondary"
@@ -412,10 +421,9 @@ function renderNetwork() {
                           ${selectable.length ? "" : "disabled"}
                         />
                       </th>
-                      <th>Dirección IP</th>
+                      <th>Equipo / IP</th>
                       <th>Conectividad</th>
                       <th>Mi inventario</th>
-                      <th>Máquina / destino</th>
                       <th>Acciones</th>
                     </tr>
                   </thead>
@@ -434,22 +442,12 @@ function renderNetwork() {
                               ${ip ? "disabled checked" : networkSelected.has(address) ? "checked" : ""}
                             />
                           </td>
-                          <td>
-                            <button
-                              class="link-button ip-address"
-                              data-open-address="${esc(address)}"
-                            >
-                              ${esc(address)}
-                            </button>
-                          </td>
+                          <td>${addressIdentity(address, ip)}</td>
                           <td data-observation="${esc(address)}">
                             ${observationCell(address)}
                           </td>
                           <td>
                             ${ip ? badge(ip.status) : html`<span class="muted">Sin reclamar</span>`}
-                          </td>
-                          <td>
-                            ${ip?.assignment ? machineLink(ip.assignment.machine_id) : ip?.plan ? esc(ip.plan.target) : "—"}
                           </td>
                           <td>
                             ${ip ? html`<button class="row-action" data-action="ip-detail" data-id="${ip.id}">Ver IP</button>` : html`<button class="row-action" data-open-address="${esc(address)}">Añadir equipo</button>`}
@@ -576,17 +574,15 @@ function ipRows(ips) {
       const m = ip.assignment && machine(ip.assignment.machine_id);
       return html`<tr>
         <td>
-          ${ipLink(ip.id)}<span class="subtext"
-            >IPv${ip.family}${ip.reusable ? t(" · Reutilizable") : ""}</span
-          >
+          ${addressIdentity(ip.address, ip)}${ip.reusable ? `<span class="subtext">${t("Reutilizable")}</span>` : ""}
         </td>
         <td>
           ${badge(ip.status)}${ip.review && (ip.assignment || ip.plan) ? `<span class="subtext">${ip.assignment ? t("Asignación conservada") : t("Plan conservado")}</span>` : ""}
         </td>
         <td>
-          ${m ? machineLink(m.id) + `<span class="subtext">${esc(m.os || m.hostname || t("Sin sistema registrado"))}${m.lifecycle === "reinstalling" ? t(" · En reinstalación") : ""}</span>` : ip.plan ? esc(ip.plan.target) + t('<span class="subtext">Destino previsto</span>') : t('<span class="muted">Sin asignar</span>')}
+          ${m ? esc(m.os || m.hostname || t("Sin sistema registrado")) + (m.lifecycle === "reinstalling" ? `<span class="subtext">${t("En reinstalación")}</span>` : "") : ip.plan ? t("Destino previsto") : "—"}
         </td>
-        <td>
+        <td class="ip-tags-column">
           ${
             m?.tags
               ? m.tags
@@ -637,10 +633,10 @@ function renderIps() {
               <table>
                 <thead>
                   <tr>
-                    <th>Dirección IP</th>
+                    <th>Equipo / IP</th>
                     <th>Estado</th>
-                    <th>Máquina / destino</th>
-                    <th>Etiquetas</th>
+                    <th>Detalles</th>
+                    <th class="ip-tags-column">Etiquetas</th>
                     <th>Acciones</th>
                   </tr>
                 </thead>
@@ -809,17 +805,76 @@ function renderHistory() {
     ${historyRows.length ? timeline(historyRows) : empty(t("Todavía no hay movimientos"), t("Aquí aparecerá la historia de tu inventario."))}${historyMore ? t('<button class="secondary load-more" data-action="more-history">Cargar anteriores</button>') : ""}
   </section>`;
 }
-function openDialog(title, content) {
+let inspectorHistory = [],
+  inspectorTrigger = null;
+function openInspector(title, content, { root = false } = {}) {
+  const panel = $("#inspector"),
+    body = $("#inspector-body");
+  if (root || panel.hidden) inspectorHistory = [];
+  else
+    inspectorHistory.push({
+      title: $("#inspector-title").textContent,
+      nodes: [...body.childNodes],
+      detailKey,
+      scroll: panel.scrollTop,
+      focus: panel.contains(document.activeElement)
+        ? document.activeElement
+        : null,
+    });
+  if (!panel.contains(document.activeElement))
+    inspectorTrigger = document.activeElement;
   detailKey = null;
-  $("#dialog-title").textContent = title;
-  $("#dialog-body").innerHTML = content;
-  if (!$("#dialog").open) $("#dialog").showModal();
+  $("#inspector-title").textContent = title;
+  body.innerHTML = content;
+  panel.hidden = false;
+  $("#workspace-layout").classList.add("inspector-open");
+  panel.scrollTop = 0;
+  updateInspectorBack();
+  $("#inspector-title").focus({ preventScroll: true });
+  if (window.matchMedia("(max-width: 900px)").matches)
+    panel.scrollIntoView({ block: "start", behavior: "instant" });
 }
-function closeDialog() {
-  if (!submitting) {
-    $("#dialog").close();
-    detailKey = null;
+function updateInspectorBack() {
+  const previous = inspectorHistory.at(-1);
+  $("#inspector-back").hidden = false;
+  $("#inspector-back").textContent = previous?.detailKey?.startsWith("ip:")
+    ? t("← Volver a la IP")
+    : previous
+      ? t("← Volver")
+      : t("← Volver a la lista");
+}
+async function backInspector() {
+  if (submitting) return;
+  const previous = inspectorHistory.pop();
+  if (!previous) {
+    closeInspector();
+    return;
   }
+  $("#inspector-title").textContent = previous.title;
+  $("#inspector-body").replaceChildren(...previous.nodes);
+  detailKey = previous.detailKey;
+  $("#inspector").scrollTop = previous.scroll;
+  updateInspectorBack();
+  (previous.focus?.isConnected ? previous.focus : $("#inspector-title")).focus({
+    preventScroll: true,
+  });
+  if (detailKey && $("#detail-events")) {
+    const [kind, id] = detailKey.split(":");
+    await loadDetailHistory(
+      { [kind === "ip" ? "ip_id" : "machine_id"]: Number(id) },
+      detailKey,
+    );
+  }
+}
+function closeInspector(force = false) {
+  if ((submitting && !force) || $("#inspector").hidden) return;
+  $("#inspector").hidden = true;
+  $("#workspace-layout").classList.remove("inspector-open");
+  inspectorHistory = [];
+  detailKey = null;
+  $("#inspector-body").replaceChildren();
+  if (inspectorTrigger?.isConnected)
+    inspectorTrigger.focus({ preventScroll: true });
 }
 function field(name, label, value = "", options = {}) {
   const { required = false, area = false, wide = false } = options;
@@ -829,7 +884,7 @@ function form(content, submit = t("Guardar"), danger = false) {
   return html`<form id="action-form">
     ${content}
     <div class="form-error" role="alert" hidden></div>
-    <div class="dialog-actions">
+    <div class="inspector-actions">
       <button type="button" class="secondary" data-action="close">
         Cancelar</button
       ><button class="${danger ? "danger" : "primary"}" type="submit">
@@ -861,8 +916,7 @@ function bindForm(handler) {
 }
 async function mutate(action, data, message) {
   const result = await api("commands/" + action, data);
-  $("#dialog").close();
-  detailKey = null;
+  closeInspector(true);
   toast(message || t("Cambio guardado."));
   try {
     await refresh();
@@ -872,7 +926,7 @@ async function mutate(action, data, message) {
   return result;
 }
 function claimForm() {
-  openDialog(
+  openInspector(
     t("Reclamar direcciones IP"),
     form(
       html`<p class="help">
@@ -926,7 +980,7 @@ function claimForm() {
 }
 function machineForm(id) {
   const m = id ? machine(id) : {};
-  openDialog(
+  openInspector(
     id ? t("Editar máquina") : t("Nueva máquina"),
     form(
       html`<p class="help">
@@ -974,8 +1028,8 @@ function ipMachineForm(address, { edit = false, replace = false } = {}) {
   const extraFields = Object.entries(fieldLabels).filter(
     ([key]) => !["name", "os"].includes(key),
   );
-  openDialog(
-    address,
+  openInspector(
+    current?.name ? `${current.name} · ${address}` : address,
     form(
       html`
         <div class="ip-form-intro">
@@ -1140,8 +1194,8 @@ async function showIp(id) {
       ),
     );
   const history = state.assignments.filter((r) => r.ip_id === id).reverse();
-  openDialog(
-    ip.address,
+  openInspector(
+    m?.name ? `${m.name} · ${ip.address}` : ip.address,
     html`
       <div class="ip-overview">
         <div class="ip-state-line">
@@ -1195,6 +1249,7 @@ async function showIp(id) {
         Esta IP permanece en tu inventario aunque el equipo esté apagado.
       </p>
     `,
+    { root: true },
   );
   detailKey = "ip:" + id;
   await loadDetailHistory({ ip_id: id }, detailKey);
@@ -1213,7 +1268,7 @@ async function showMachine(id) {
     >
       Editar ficha</button
     >${m.lifecycle === "active" ? html`<button class="primary" data-action="reinstall" data-id="${id}">Reinstalar / formatear</button>` : m.lifecycle === "reinstalling" ? html`<button class="primary" data-action="finish_reinstall" data-id="${id}">Finalizar reinstalación</button>` : html`<button class="secondary" data-action="restore_machine" data-id="${id}">Reactivar máquina</button>`}${m.lifecycle !== "retired" ? html`<button class="danger" data-action="retire" data-id="${id}">Retirar máquina</button>` : ""}`;
-  openDialog(
+  openInspector(
     m.name,
     html`${badge(m.lifecycle)}${m.lifecycle === "reinstalling" ? t('<div class="notice">Las IPs siguen asignadas a esta máquina durante el formateo. Al terminar puedes editar el SO, hostname y demás datos sin perder su historia.</div>') : ""}
       <div class="detail-section details-grid">
@@ -1285,7 +1340,7 @@ function reasonForm(
   const returnIp = detailKey?.startsWith("ip:")
     ? Number(detailKey.slice(3))
     : null;
-  openDialog(
+  openInspector(
     title,
     form(
       `<div class="notice ${danger ? "warning" : ""}">${explanation}</div>${field("reason", requiresDetails ? t("Motivo o detalle") : t("Nota (opcional)"), "", { required: requiresDetails, area: true })}`,
@@ -1323,7 +1378,7 @@ async function dispatch(action, id) {
       break;
     case "claim-selected": {
       const selected = [...networkSelected];
-      openDialog(
+      openInspector(
         t("Reclamar IPs seleccionadas"),
         form(
           html`<div class="notice">
@@ -1347,7 +1402,7 @@ async function dispatch(action, id) {
       break;
     }
     case "close":
-      closeDialog();
+      await backInspector();
       break;
     case "claim":
       claimForm();
@@ -1374,7 +1429,7 @@ async function dispatch(action, id) {
       assignForm(id);
       break;
     case "plan":
-      openDialog(
+      openInspector(
         t("Guardar para después: ") + ip.address,
         form(
           html`<p class="help">
@@ -1436,7 +1491,7 @@ async function dispatch(action, id) {
       );
       break;
     case "ip-notes":
-      openDialog(
+      openInspector(
         t("Notas de ") + ip.address,
         form(field("notes", t("Notas"), ip.notes, { area: true })),
       );
@@ -1512,7 +1567,7 @@ async function dispatch(action, id) {
       break;
     case "ip-history":
     case "machine-history":
-      closeDialog();
+      closeInspector();
       navigate("history");
       historyFilter =
         action === "ip-history" ? { ip_id: id } : { machine_id: id };
@@ -1524,6 +1579,19 @@ document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button || submitting) return;
   try {
+    if (
+      !button.closest("#inspector") &&
+      (button.dataset.openAddress ||
+        [
+          "ip-detail",
+          "machine-detail",
+          "claim-selected",
+          "claim",
+          "assign",
+          "edit-machine",
+        ].includes(button.dataset.action))
+    )
+      closeInspector();
     if (button.dataset.openAddress) {
       await openAddress(button.dataset.openAddress);
     } else if (button.dataset.claimAddress) {
@@ -1584,10 +1652,21 @@ document.addEventListener("change", (event) => {
     renderNetwork();
   }
 });
-$("#claim").addEventListener("click", claimForm);
-$("#close-dialog").addEventListener("click", closeDialog);
-$("#dialog").addEventListener("cancel", (event) => {
-  if (submitting) event.preventDefault();
+$("#claim").addEventListener("click", () => {
+  if (!submitting) {
+    closeInspector();
+    claimForm();
+  }
+});
+$("#close-inspector").addEventListener("click", () => closeInspector());
+$("#inspector-back").addEventListener("click", () =>
+  backInspector().catch(showGlobalError),
+);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("#inspector").hidden && !submitting) {
+    event.preventDefault();
+    backInspector().catch(showGlobalError);
+  }
 });
 $("#refresh").addEventListener("click", () =>
   refresh()
@@ -1597,7 +1676,7 @@ $("#refresh").addEventListener("click", () =>
 );
 $(".brand").addEventListener("click", (event) => {
   event.preventDefault();
-  if (state) navigate("network");
+  if (state && !submitting) navigate("network");
 });
 refresh()
   .then(() => {

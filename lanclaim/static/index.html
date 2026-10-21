@@ -48,30 +48,46 @@
         hidden
         aria-label="Resumen del inventario"
       ></section>
-      <div id="content">
-        <div class="empty">Cargando tu espacio…</div>
+      <div id="workspace-layout" class="workspace-layout">
+        <div id="content">
+          <div class="empty">Cargando tu espacio…</div>
+        </div>
+        <aside
+          id="inspector"
+          class="inspector"
+          hidden
+          aria-labelledby="inspector-title"
+        >
+          <div class="inspector-heading">
+            <button
+              class="quiet inspector-back"
+              id="inspector-back"
+              type="button"
+              hidden
+            >
+              ← Volver
+            </button>
+            <div>
+              <h2 id="inspector-title" tabindex="-1"></h2>
+            </div>
+            <button
+              type="button"
+              class="icon-button"
+              id="close-inspector"
+              aria-label="Cerrar detalles"
+            >
+              ×
+            </button>
+          </div>
+          <div id="inspector-body"></div>
+        </aside>
       </div>
       <footer>
         <span>Una IP sin respuesta no significa que esté disponible.</span
         ><span id="version">v0.1.0</span>
       </footer>
     </main>
-    <dialog id="dialog" aria-labelledby="dialog-title">
-      <div class="dialog-heading">
-        <div>
-          <h2 id="dialog-title"></h2>
-        </div>
-        <button
-          type="button"
-          class="icon-button"
-          id="close-dialog"
-          aria-label="Cerrar"
-        >
-          ×
-        </button>
-      </div>
-      <div id="dialog-body"></div>
-    </dialog>
+
     <div id="toast" class="toast" role="status" hidden></div>
   </body>
 </html>
