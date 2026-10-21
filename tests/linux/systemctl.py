@@ -47,9 +47,18 @@ def start():
             env[key] = value
     env['PYTHONDONTWRITEBYTECODE'] = '1'
     account = pwd.getpwnam('lanclaim')
+    unit = Path('/etc/systemd/system/lanclaim.service').read_text()
+    for setting in ('User=lanclaim', 'NoNewPrivileges=true',
+                    'CapabilityBoundingSet=CAP_NET_RAW', 'AmbientCapabilities=CAP_NET_RAW'):
+        if setting not in unit.splitlines():
+            raise RuntimeError('Missing service permission setting: ' + setting)
+    # Reproduce UID/capability/NNP semantics for real ping, even when the kernel
+    # denies unprivileged ICMP sockets. Other systemd sandboxing is not emulated.
+    command = ['setpriv', f'--reuid={account.pw_uid}', f'--regid={account.pw_gid}', '--clear-groups',
+               '--inh-caps=+net_raw', '--ambient-caps=+net_raw', '--bounding-set=-all,+net_raw',
+               '--no-new-privs', '/usr/bin/python3', '-m', 'lanclaim.server']
     with open('/tmp/lanclaim-test.log', 'ab') as output:
-        process = subprocess.Popen(['/usr/bin/python3', '-m', 'lanclaim.server'], cwd='/opt/lanclaim/current',
-                                   env=env, user=account.pw_uid, group=account.pw_gid, extra_groups=[],
+        process = subprocess.Popen(command, cwd='/opt/lanclaim/current', env=env,
                                    stdin=subprocess.DEVNULL, stdout=output, stderr=output, start_new_session=True)
     pidfile.write_text(str(process.pid))
 

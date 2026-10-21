@@ -54,5 +54,17 @@ assert.equal(vm.runInContext("t('Direcciones IP')", en), "IP addresses");
 assert.equal(vm.runInContext("t('Ya hay un escaneo en curso.')", en), "A scan is already running.");
 
 assert.equal(vm.runInContext("t('Guardar IP y equipo')", en), "Save IP and device");
+assert.equal(
+  vm.runInContext("t('El servicio no tiene permisos para usar ping. Actualiza LanClaim para reparar los permisos del servicio.')", en),
+  "The service does not have permission to use ping. Update LanClaim to repair service permissions.",
+);
+assert.equal(
+  vm.runInContext("t('Ping no terminó a tiempo. Revisa la carga y la red del servidor.')", en),
+  "Ping did not finish in time. Check server load and networking.",
+);
+assert.equal(
+  vm.runInContext("t('El servidor no tiene una ruta hacia esa red. Revisa su interfaz, gateway o red virtual.')", en),
+  "The server has no route to that network. Check its interface, gateway or virtual network.",
+);
 assert.equal(vm.runInContext("t('Voy a formatear este equipo')", en), "I am reinstalling this device");
 assert.equal(vm.runInContext("t('El equipo de esta IP cambió. Actualiza antes de guardar.')", en), "The device using this IP changed. Refresh before saving.");

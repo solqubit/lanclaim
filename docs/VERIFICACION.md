@@ -2,7 +2,7 @@
 
 ## Pruebas ejecutadas
 
-- 50 pruebas Python de dominio, persistencia, concurrencia, recuperación transaccional, API HTTP, detección de interfaces locales, escaneo acotado/cancelable, migración de observaciones guardado atómico de IP/equipo, migración de listas de SO/plataforma, persistencia de opciones y conservación de campos omitidos: aprobadas en Windows con Python 3.14 y Ubuntu 26.04 sobre WSL2 con Python 3.14.
+- 52 pruebas Python de dominio, persistencia, concurrencia, recuperación transaccional, API HTTP, detección de interfaces locales, escaneo acotado/cancelable, migración de observaciones guardado atómico de IP/equipo, migración de listas de SO/plataforma, persistencia de opciones y conservación de campos omitidos: aprobadas en Windows con Python 3.14 y Ubuntu 26.04 sobre WSL2 con Python 3.14.
 - Pruebas de traducción ES/EN con Node: etiquetas, errores, texto con saltos de línea, plantillas y conservación literal del contenido del usuario.
 - Sintaxis JavaScript y Bash; ShellCheck para los scripts de instalación, actualización, desinstalación y prueba de ciclo de vida.
 - Integración en contenedor Ubuntu 24.04: instalación, repetición sin pérdida de datos, actualización, fallo simulado de migración que modifica la base, recuperación de código y datos, desinstalación conservando datos, reinstalación y cancelación/confirmación de purga. Se ejecuta el servidor real con el UID del servicio mediante un adaptador de `systemctl` exclusivo de pruebas.
@@ -15,6 +15,8 @@
 La recarga del navegador se verificó con una IP abierta y búsqueda/filtro activos, una máquina bajo el filtro de reinstalación y un cambio de inglés a español. En Red, se conservan el rango, el filtro «Sin reclamar», la segunda página y el desplazamiento (4062 px en la prueba). La ficha LMS también permaneció abierta al recargar la instancia principal, sin modificar sus datos. Esta restauración guarda la ubicación por pestaña; no recupera borradores ni confirmaciones pendientes.
 
 Las etiquetas de estado y conectividad usan ahora fondos oscuros teñidos, bordes discretos y texto pastel. Se revisaron en la lista real los estados Activa, Asignada y Sin respuesta; se calcularon contrastes de texto entre 7,83:1 y 8,53:1 para todas las variantes. Las dimensiones de las etiquetas se mantienen compensando el borde con el relleno.
+
+Se reprodujo el fallo de ping en un proceso Python sin privilegios con `NoNewPrivileges` y `net.ipv4.ping_group_range=1 0`. Con únicamente `CAP_NET_RAW`, la comprobación de loopback responde. El ciclo de vida completo pasó tanto con el rango ICMP normal como restringido; la cuenta del servidor mantiene UID no root, NoNewPrivileges y solo CAP_NET_RAW en los conjuntos efectivo y límite. Se verificó además una unidad transitoria de systemd real en WSL2 con esas restricciones y ping a loopback; esta comprobación no certifica el despliegue completo del servicio. Los mensajes ES/EN distinguen permisos, falta de ruta y tiempo del proceso agotado.
 
 ## Límites de la verificación
 

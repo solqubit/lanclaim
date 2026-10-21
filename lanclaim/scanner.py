@@ -1,5 +1,7 @@
 """Manual, bounded ICMP checks. Observations never change IP ownership."""
 import ipaddress
+import logging
+import os
 import re
 import shutil
 import subprocess
@@ -8,6 +10,11 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from .db import Invalid, addresses, now
+
+
+PING_PERMISSION_ERROR = 'El servicio no tiene permisos para usar ping. Actualiza LanClaim para reparar los permisos del servicio.'
+PING_TIMEOUT_ERROR = 'Ping no terminó a tiempo. Revisa la carga y la red del servidor.'
+PING_NETWORK_ERROR = 'El servidor no tiene una ruta hacia esa red. Revisa su interfaz, gateway o red virtual.'
 
 
 def scan_addresses(raw):
@@ -41,10 +48,26 @@ def ping(address):
         executable, '-n', '-c', '1', '-W', '1', address]
     try:
         result = subprocess.run(args, capture_output=True, timeout=4,
+                                env=None if windows else {**os.environ, 'LC_ALL': 'C'},
                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0) if windows else 0)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except PermissionError as exc:
+        raise Invalid(PING_PERMISSION_ERROR) from exc
+    except FileNotFoundError as exc:
+        raise Invalid('No se encontró ping. Instala iputils-ping o iputils en el servidor.') from exc
+    except subprocess.TimeoutExpired as exc:
+        raise Invalid(PING_TIMEOUT_ERROR) from exc
+    except OSError as exc:
         raise Invalid('No se pudo ejecutar ping. Revisa los permisos y la red del servidor.') from exc
     if not windows and result.returncode not in (0, 1):
+        # Keep diagnostics in the service log; only actionable, translated errors
+        # are exposed in the UI. A local failure is never a no-response result.
+        detail = result.stderr.decode('utf-8', errors='replace')[:1000]
+        logging.getLogger(__name__).warning('ping exited with status %s: %s', result.returncode, detail.strip())
+        detail = detail.lower()
+        if any(message in detail for message in ('operation not permitted', 'permission denied', 'cap_net_raw')):
+            raise Invalid(PING_PERMISSION_ERROR)
+        if any(message in detail for message in ('network is unreachable', 'no route to host')):
+            raise Invalid(PING_NETWORK_ERROR)
         raise Invalid('No se pudo ejecutar ping. Revisa los permisos y la red del servidor.')
     # Windows can return success for an ICMP destination-unreachable message.
     responds = result.returncode == 0 and (not windows or re.search(rb'TTL[= ]+\d+', result.stdout, re.I) is not None)

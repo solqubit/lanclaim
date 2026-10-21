@@ -28,3 +28,4 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -f tests/linux/Dockerfile -t lanclaim-lifecycle:test .
       - run: docker run --rm lanclaim-lifecycle:test
+      - run: docker run --rm --sysctl 'net.ipv4.ping_group_range=1 0' lanclaim-lifecycle:test
