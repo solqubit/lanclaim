@@ -1,10 +1,36 @@
+"""Inventario personal de IPs: redes, IPs reclamadas, equipos y observaciones de ping."""
 import ipaddress
-import json
 import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+SCHEMA_VERSION = 5
+MAX_ADDRESSES = 4096
+MIN_PREFIX, MAX_PREFIX = 22, 30
+DEVICE_TYPES = ('vm', 'fisica', 'contenedor', 'otro')
+
+SCHEMA = """
+CREATE TABLE networks (
+ id INTEGER PRIMARY KEY, cidr TEXT NOT NULL UNIQUE, sort_key INTEGER NOT NULL,
+ name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+);
+CREATE TABLE devices (
+ id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE,
+ type TEXT NOT NULL CHECK(type IN ('vm','fisica','contenedor','otro')),
+ os TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+);
+CREATE TABLE ips (
+ id INTEGER PRIMARY KEY, address TEXT NOT NULL UNIQUE, sort_key INTEGER NOT NULL,
+ device_id INTEGER REFERENCES devices(id) ON DELETE SET NULL,
+ note TEXT NOT NULL DEFAULT '', claimed_at TEXT NOT NULL
+);
+CREATE INDEX ips_device ON ips(device_id);
+CREATE TABLE observations (
+ address TEXT PRIMARY KEY, up INTEGER NOT NULL, checked_at TEXT NOT NULL, last_up_at TEXT
+);
+"""
 
 
 class Invalid(ValueError):
@@ -15,167 +41,140 @@ def now():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
-ASSIGNMENT_GUARDS = """
-CREATE TRIGGER assignment_guard BEFORE INSERT ON assignments WHEN NEW.ended_at IS NULL BEGIN
- SELECT CASE WHEN EXISTS(SELECT 1 FROM plans WHERE ip_id=NEW.ip_id AND status='open')
- OR EXISTS(SELECT 1 FROM reviews WHERE ip_id=NEW.ip_id AND closed_at IS NULL)
- OR NOT EXISTS(SELECT 1 FROM machines WHERE id=NEW.machine_id AND lifecycle='active')
- THEN RAISE(ABORT,'La IP o la máquina no permite esta asignación') END;
-END;
-CREATE TRIGGER plan_guard BEFORE INSERT ON plans WHEN NEW.status='open' BEGIN
- SELECT CASE WHEN EXISTS(SELECT 1 FROM assignments WHERE ip_id=NEW.ip_id AND ended_at IS NULL)
- OR EXISTS(SELECT 1 FROM reviews WHERE ip_id=NEW.ip_id AND closed_at IS NULL)
- THEN RAISE(ABORT,'La IP no está disponible') END;
-END;
-"""
-
-SCHEMA = """
-CREATE TABLE ips (
- id INTEGER PRIMARY KEY, address TEXT NOT NULL UNIQUE, family INTEGER NOT NULL,
- claimed_at TEXT NOT NULL, notes TEXT NOT NULL DEFAULT ''
-);
-CREATE TABLE machines (
- id INTEGER PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
- os TEXT NOT NULL DEFAULT '', hostname TEXT NOT NULL DEFAULT '', mac TEXT NOT NULL DEFAULT '',
- platform TEXT NOT NULL DEFAULT '', vm_id TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '',
- notes TEXT NOT NULL DEFAULT '', lifecycle TEXT NOT NULL DEFAULT 'active'
- CHECK(lifecycle IN ('active','reinstalling','retired')), created_at TEXT NOT NULL, retired_at TEXT
-);
-CREATE TABLE assignments (
- id INTEGER PRIMARY KEY, ip_id INTEGER NOT NULL REFERENCES ips(id),
- machine_id INTEGER NOT NULL REFERENCES machines(id), started_at TEXT NOT NULL,
- ended_at TEXT, reason TEXT NOT NULL DEFAULT '', end_reason TEXT
-);
-CREATE UNIQUE INDEX one_active_assignment ON assignments(ip_id) WHERE ended_at IS NULL;
-CREATE TABLE plans (
- id INTEGER PRIMARY KEY, ip_id INTEGER NOT NULL REFERENCES ips(id), target TEXT NOT NULL,
- notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, closed_at TEXT,
- status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','executed','cancelled'))
-);
-CREATE UNIQUE INDEX one_open_plan ON plans(ip_id) WHERE status='open';
-CREATE TABLE reviews (
- id INTEGER PRIMARY KEY, ip_id INTEGER NOT NULL REFERENCES ips(id), reason TEXT NOT NULL,
- opened_at TEXT NOT NULL, closed_at TEXT, resolution TEXT
-);
-CREATE TABLE events (
- id INTEGER PRIMARY KEY, at TEXT NOT NULL, kind TEXT NOT NULL,
- ip_id INTEGER REFERENCES ips(id), machine_id INTEGER REFERENCES machines(id),
- detail TEXT NOT NULL
-);
-CREATE INDEX events_ip ON events(ip_id,id);
-CREATE INDEX events_machine ON events(machine_id,id);
-""" + ASSIGNMENT_GUARDS + 'PRAGMA user_version=1;\n'
-
-MACHINE_FIELDS = ('name', 'description', 'os', 'hostname', 'mac', 'platform', 'vm_id', 'tags', 'notes')
+def _host(text):
+    try:
+        address = ipaddress.ip_address(text)
+    except ValueError:
+        raise Invalid(f'«{text}» no es una dirección IP válida.') from None
+    if address.version != 4:
+        raise Invalid('LanClaim solo admite direcciones IPv4.')
+    if address.is_multicast or address.is_unspecified or str(address) == '255.255.255.255':
+        raise Invalid(f'{address} no es una dirección de equipo.')
+    return address
 
 
-def string(data, key, required=False, limit=4000):
+def _sort_key(address):
+    return int(ipaddress.IPv4Address(address))
+
+
+def parse_addresses(raw):
+    """IPs sueltas, rangos (192.168.1.10-20 o completos) y CIDR, como lista IPv4 canónica ordenada."""
+    if isinstance(raw, (list, tuple)):
+        if not all(isinstance(item, str) for item in raw):
+            raise Invalid('Lista de direcciones inválida.')
+        raw = ','.join(raw)
+    if not isinstance(raw, str) or not raw.strip():
+        raise Invalid('Escribe una IP, un rango o una red.')
+    if len(raw) > 100000:
+        raise Invalid('Demasiadas direcciones.')
+    result = set()
+    for token in re.split(r'[,;\s]+', re.sub(r'\s*-\s*', '-', raw.strip())):
+        if not token:
+            continue
+        if '/' in token:
+            try:
+                network = ipaddress.IPv4Network(token, strict=False)
+            except ValueError:
+                raise Invalid(f'«{token}» no es una red IPv4 válida.') from None
+            if network.num_addresses > MAX_ADDRESSES:
+                raise Invalid(f'Máximo {MAX_ADDRESSES} direcciones por operación.')
+            hosts = [_host(str(h)) for h in (network.hosts() if network.prefixlen < 32 else [network.network_address])]
+        elif '-' in token:
+            left, right = token.split('-', 1)
+            first = _host(left)
+            if '.' not in right:
+                right = left.rsplit('.', 1)[0] + '.' + right
+            last = _host(right)
+            count = int(last) - int(first) + 1
+            if count <= 0:
+                raise Invalid(f'El rango «{token}» está al revés.')
+            if count > MAX_ADDRESSES:
+                raise Invalid(f'Máximo {MAX_ADDRESSES} direcciones por operación.')
+            hosts = [_host(str(ipaddress.IPv4Address(n))) for n in range(int(first), int(last) + 1)]
+        else:
+            hosts = [_host(token)]
+        result.update(str(h) for h in hosts)
+        if len(result) > MAX_ADDRESSES:
+            raise Invalid(f'Máximo {MAX_ADDRESSES} direcciones por operación.')
+    if not result:
+        raise Invalid('Escribe una IP, un rango o una red.')
+    return sorted(result, key=_sort_key)
+
+
+def _optional_addresses(raw):
+    if raw is None or raw == '' or raw == [] or raw == ():
+        return []
+    return parse_addresses(raw)
+
+
+def parse_network(cidr):
+    if not isinstance(cidr, str):
+        raise Invalid('Escribe una red en formato CIDR, por ejemplo 192.168.1.0/24.')
+    try:
+        network = ipaddress.ip_network(cidr.strip(), strict=False)
+    except ValueError:
+        raise Invalid(f'«{cidr}» no es una red válida. Ejemplo: 192.168.1.0/24.') from None
+    if network.version != 4:
+        raise Invalid('LanClaim solo admite redes IPv4.')
+    if not MIN_PREFIX <= network.prefixlen <= MAX_PREFIX:
+        raise Invalid(f'La red debe estar entre /{MIN_PREFIX} y /{MAX_PREFIX}.')
+    return network
+
+
+def _text(data, key, limit, required=False, label=None):
     value = data.get(key, '')
-    if not isinstance(value, str) or len(value) > limit:
-        raise Invalid(f'Campo inválido: {key} (máximo {limit} caracteres).')
+    if value is None:
+        value = ''
+    if not isinstance(value, str):
+        raise Invalid(f'Campo inválido: {label or key}.')
     value = value.strip()
+    if len(value) > limit:
+        raise Invalid(f'{label or key}: máximo {limit} caracteres.')
     if required and not value:
-        raise Invalid(f'Completa el campo {key}.')
+        raise Invalid(f'Completa el campo {label or key}.')
     return value
 
 
-def addresses(raw):
-    """Accept individual addresses, inclusive ranges and whole CIDRs, atomically."""
-    if not isinstance(raw, str) or not raw.strip() or len(raw) > 100000:
-        raise Invalid('Introduce direcciones, rangos o redes CIDR.')
-    result = set()
-    try:
-        for token in re.split(r'[,;\s]+', re.sub(r'\s*-\s*', '-', raw.strip())):
-            if not token:
-                continue
-            if '/' in token:
-                network = ipaddress.ip_network(token, strict=False)
-                first, last = network.network_address, network.broadcast_address
-            elif '-' in token:
-                left, right = token.split('-', 1)
-                first, last = ipaddress.ip_address(left), ipaddress.ip_address(right)
-            else:
-                first = last = ipaddress.ip_address(token)
-            if '%' in str(first) or '%' in str(last):
-                raise ValueError('No se admiten identificadores de zona IPv6.')
-            count = int(last) - int(first) + 1
-            if first.version != last.version or count <= 0 or count > 4096:
-                raise ValueError('Rango inválido o superior a 4096 direcciones.')
-            for number in range(int(first), int(last) + 1):
-                result.add(str(type(first)(number)))
-            if len(result) > 4096:
-                raise ValueError('Máximo 4096 direcciones por operación.')
-    except ValueError as exc:
-        raise Invalid(f'Direcciones inválidas: {exc}') from exc
-    return sorted(result, key=lambda a: (ipaddress.ip_address(a).version, int(ipaddress.ip_address(a))))
+def _device_fields(data):
+    if not isinstance(data, dict):
+        raise Invalid('Datos de equipo inválidos.')
+    fields = {
+        'name': _text(data, 'name', 120, True, 'nombre'),
+        'type': data.get('type') or 'vm',
+        'os': _text(data, 'os', 120, label='sistema operativo'),
+        'note': _text(data, 'note', 2000, label='nota'),
+    }
+    if fields['type'] not in DEVICE_TYPES:
+        raise Invalid('Tipo de equipo desconocido.')
+    return fields
+
+
+def _int_id(value, what):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise Invalid(f'Identificador de {what} inválido.')
+    return value
 
 
 class Store:
     def __init__(self, path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.connect() as db:
+        db = sqlite3.connect(self.path, timeout=15)
+        try:
             db.execute('PRAGMA journal_mode=WAL')
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version > 4:
-                raise RuntimeError('La base de datos requiere una versión más reciente de LanClaim.')
-            if version == 0:
-                db.executescript('BEGIN IMMEDIATE;\n' + SCHEMA + '\nCOMMIT;')
-            if version < 2:
-                db.executescript("""BEGIN IMMEDIATE;
-                    CREATE TABLE observations (
-                        address TEXT PRIMARY KEY,
-                        status TEXT NOT NULL CHECK(status IN ('responding','no_response')),
-                        checked_at TEXT NOT NULL
-                    );
-                    PRAGMA user_version=2;
-                    COMMIT;""")
-
-            if version < 3:
-                db.executescript("""BEGIN IMMEDIATE;
-                    CREATE TABLE machine_choices (
-                        field TEXT NOT NULL CHECK(field IN ('os','platform')),
-                        value TEXT NOT NULL COLLATE NOCASE,
-                        PRIMARY KEY(field,value)
-                    );
-                    INSERT OR IGNORE INTO machine_choices SELECT 'os', TRIM(os) FROM machines WHERE TRIM(os) != '';
-                    INSERT OR IGNORE INTO machine_choices SELECT 'platform', TRIM(platform) FROM machines WHERE TRIM(platform) != '';
-                    PRAGMA user_version=3;
-                    COMMIT;""")
-
-            if version < 4:
-                # Closed IP usage can outlive a deliberately deleted machine.
-                # Keep dates and reuse eligibility, but require a device for any
-                # live assignment. Rebuild both guards in the same transaction.
-                db.executescript("""BEGIN IMMEDIATE;
-                    CREATE TABLE identity_counters (
-                        name TEXT PRIMARY KEY, value INTEGER NOT NULL CHECK(value >= 0)
-                    );
-                    INSERT INTO identity_counters VALUES('machine_id',(SELECT COALESCE(MAX(id),0) FROM machines));
-                    DROP TRIGGER plan_guard;
-                    CREATE TABLE assignments_next (
-                        id INTEGER PRIMARY KEY, ip_id INTEGER NOT NULL REFERENCES ips(id),
-                        machine_id INTEGER REFERENCES machines(id), started_at TEXT NOT NULL,
-                        ended_at TEXT, reason TEXT NOT NULL DEFAULT '', end_reason TEXT,
-                        CHECK(machine_id IS NOT NULL OR ended_at IS NOT NULL)
-                    );
-                    INSERT INTO assignments_next SELECT * FROM assignments;
-                    DROP TABLE assignments;
-                    ALTER TABLE assignments_next RENAME TO assignments;
-                    CREATE UNIQUE INDEX one_active_assignment ON assignments(ip_id) WHERE ended_at IS NULL;
-                    """ + ASSIGNMENT_GUARDS + """
-                    PRAGMA user_version=4;
-                    COMMIT;""")
-
-    def observe(self, address, status):
-        with self.transaction() as db:
-            db.execute('INSERT INTO observations(address,status,checked_at) VALUES(?,?,?) '
-                       'ON CONFLICT(address) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at',
-                       (address, status, now()))
-
-    def observations(self):
-        with self.connect() as db:
-            return [dict(row) for row in db.execute('SELECT * FROM observations ORDER BY address')]
+            if version > SCHEMA_VERSION:
+                raise RuntimeError('La base de datos pertenece a una versión más nueva de LanClaim.')
+            if version != SCHEMA_VERSION:
+                # Las versiones anteriores no se conservan: se descarta todo y se empieza vacío.
+                objects = db.execute("SELECT type, name FROM sqlite_master WHERE type IN ('table','view') "
+                                     "AND name NOT LIKE 'sqlite_%'").fetchall()
+                drops = ''.join(f'DROP {kind.upper()} IF EXISTS "{name.replace(chr(34), chr(34) * 2)}";\n'
+                                for kind, name in objects)
+                db.execute('PRAGMA foreign_keys=OFF')
+                db.executescript(f'BEGIN;\n{drops}{SCHEMA}PRAGMA user_version={SCHEMA_VERSION};\nCOMMIT;')
+        finally:
+            db.close()
 
     @contextmanager
     def connect(self):
@@ -198,240 +197,6 @@ class Store:
                 db.rollback()
                 raise
 
-    def event(self, db, kind, detail, ip_id=None, machine_id=None):
-        db.execute('INSERT INTO events(at,kind,ip_id,machine_id,detail) VALUES(?,?,?,?,?)',
-                   (now(), kind, ip_id, machine_id, json.dumps(detail, ensure_ascii=False)))
-
-    def row(self, db, table, ident):
-        # table is always an internal literal, never supplied by HTTP clients.
-        row = db.execute(f'SELECT * FROM {table} WHERE id=?', (ident,)).fetchone()
-        if row is None:
-            raise Invalid('El registro ya no existe. Actualiza la página.')
-        return dict(row)
-
-    def snapshot(self):
-        with self.connect() as db:
-            db.execute('BEGIN')
-            result = {table: [dict(r) for r in db.execute(f'SELECT * FROM {table} ORDER BY id')]
-                      for table in ('ips', 'machines', 'assignments', 'plans', 'reviews')}
-            result['machine_choices'] = {
-                field: [r[0] for r in db.execute('SELECT value FROM machine_choices WHERE field=? ORDER BY value COLLATE NOCASE', (field,))]
-                for field in ('os', 'platform')}
-        assignments = {r['ip_id']: r for r in result['assignments'] if not r['ended_at']}
-        plans = {r['ip_id']: r for r in result['plans'] if r['status'] == 'open'}
-        reviews = {r['ip_id'] for r in result['reviews'] if not r['closed_at']}
-        used = {r['ip_id'] for r in result['assignments'] if r['ended_at']}
-        for ip in result['ips']:
-            ip['assignment'] = assignments.get(ip['id'])
-            ip['plan'] = plans.get(ip['id'])
-            ip['review'] = ip['id'] in reviews
-            ip['status'] = ('review' if ip['review'] else 'assigned' if ip['assignment']
-                            else 'planned' if ip['plan'] else 'available')
-            ip['reusable'] = ip['status'] == 'available' and ip['id'] in used
-        result['ips'].sort(key=lambda x: (x['family'], int(ipaddress.ip_address(x['address']))))
-        result['counts'] = {
-            'claimed': len(result['ips']),
-            'available': sum(i['status'] == 'available' for i in result['ips']),
-            'assigned': len(assignments), 'planned': len(plans), 'review': len(reviews),
-            'reusable': sum(i['reusable'] for i in result['ips']),
-            'retired': sum(m['lifecycle'] == 'retired' for m in result['machines'])}
-        return result
-
-    def history(self, ip_id=None, machine_id=None, before=None):
-        clauses, args = [], []
-        for column, value in (('ip_id', ip_id), ('machine_id', machine_id), ('id', before)):
-            if value is not None:
-                clauses.append(f'{column}{"<" if column == "id" else "="}?')
-                args.append(value)
-        where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
-        with self.connect() as db:
-            rows = [dict(r) for r in db.execute('SELECT * FROM events' + where + ' ORDER BY id DESC LIMIT 100', args)]
-        for row in rows:
-            row['detail'] = json.loads(row['detail'])
-        return rows
-
-    def command(self, action, data):
-        if not isinstance(data, dict):
-            raise Invalid('Se esperaba un objeto JSON.')
-        try:
-            with self.transaction() as db:
-                return self._command(db, action, data)
-        except sqlite3.IntegrityError as exc:
-            raise Invalid('La operación entra en conflicto con el estado actual. Actualiza e inténtalo de nuevo.') from exc
-
-    def _command(self, db, action, data):
-        if action == 'save_ip_machine':
-            # Claim, create/edit and assign in one transaction. A failed assignment
-            # must not leave a stray machine or a partially claimed address behind.
-            batch = addresses(data.get('address'))
-            if len(batch) != 1:
-                raise Invalid('Selecciona una sola IP para registrar su equipo.')
-            mode = data.get('mode')
-            if mode not in ('create', 'existing', 'edit') or 'assignment_id' not in data:
-                raise Invalid('Selecciona cómo quieres guardar el equipo de esta IP.')
-            ip = db.execute('SELECT * FROM ips WHERE address=?', (batch[0],)).fetchone()
-            active = db.execute('SELECT * FROM assignments WHERE ip_id=? AND ended_at IS NULL',
-                                (ip['id'],)).fetchone() if ip else None
-            if data['assignment_id'] != (active['id'] if active else None):
-                raise Invalid('El equipo de esta IP cambió. Actualiza antes de guardar.')
-            if mode == 'edit':
-                if not active:
-                    raise Invalid('Esta IP todavía no tiene equipo.')
-                fields = data.get('machine')
-                if not isinstance(fields, dict):
-                    raise Invalid('Se esperaba un objeto JSON.')
-                result = self._command(db, 'edit_machine', {**fields, 'id': active['machine_id']})
-                return {'ip_id': ip['id'], 'machine_id': result['id']}
-            if not ip:
-                self._command(db, 'claim', {'addresses': batch[0]})
-                ip = db.execute('SELECT * FROM ips WHERE address=?', (batch[0],)).fetchone()
-            if mode == 'create':
-                fields = data.get('machine')
-                if not isinstance(fields, dict):
-                    raise Invalid('Se esperaba un objeto JSON.')
-                machine_id = self._command(db, 'create_machine', fields)['id']
-            else:
-                machine_id = self.row(db, 'machines', data.get('machine_id'))['id']
-                if active and machine_id == active['machine_id']:
-                    raise Invalid('Ese equipo ya utiliza esta IP. Puedes editar sus datos.')
-            reason = string(data, 'reason', bool(active))
-            if active:
-                self.release(db, dict(active), reason)
-            self._command(db, 'assign', {'ip_id': ip['id'], 'machine_id': machine_id,
-                                        'plan_id': data.get('plan_id'), 'reason': reason})
-            return {'ip_id': ip['id'], 'machine_id': machine_id}
-
-        if action in ('claim', 'preview_claim'):
-            batch = addresses(data.get('addresses'))
-            existing = {r[0] for r in db.execute('SELECT address FROM ips')}
-            fresh = [a for a in batch if a not in existing]
-            if action == 'claim':
-                for address in fresh:
-                    cur = db.execute('INSERT INTO ips(address,family,claimed_at) VALUES(?,?,?)',
-                                     (address, ipaddress.ip_address(address).version, now()))
-                    self.event(db, 'claimed', {'address': address}, ip_id=cur.lastrowid)
-            return {'addresses': batch, 'added': len(fresh), 'existing': len(batch) - len(fresh)}
-
-        if action in ('create_machine', 'edit_machine'):
-            if action == 'edit_machine':
-                data = {**self.row(db, 'machines', data.get('id')), **data}
-            fields = {key: string(data, key, key == 'name', 200 if key not in ('notes', 'description') else 4000)
-                      for key in MACHINE_FIELDS}
-            if fields['mac'] and not re.fullmatch(r'(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}', fields['mac']):
-                raise Invalid('La MAC debe tener seis pares hexadecimales, por ejemplo AA:BB:CC:DD:EE:FF.')
-            if action == 'create_machine':
-                # Deleted IDs must not become targets for stale edit/retire tabs.
-                db.execute("UPDATE identity_counters SET value=value+1 WHERE name='machine_id'")
-                ident = db.execute("SELECT value FROM identity_counters WHERE name='machine_id'").fetchone()[0]
-                db.execute(f'INSERT INTO machines(id,{",".join(MACHINE_FIELDS)},created_at) VALUES({",".join("?" for _ in range(11))})',
-                           (ident, *fields.values(), now()))
-                self.event(db, 'machine_created', fields, machine_id=ident)
-            else:
-                ident = data.get('id')
-                old = self.row(db, 'machines', ident)
-                db.execute(f'UPDATE machines SET {",".join(k+"=?" for k in MACHINE_FIELDS)} WHERE id=?', (*fields.values(), ident))
-                changes = {k: {'before': old[k], 'after': v} for k, v in fields.items() if old[k] != v}
-                if changes:
-                    self.event(db, 'machine_edited', changes, machine_id=ident)
-            for field in ('os', 'platform'):
-                if fields[field]:
-                    db.execute('INSERT OR IGNORE INTO machine_choices(field,value) VALUES(?,?)', (field, fields[field]))
-            return {'id': ident}
-
-        if action == 'delete_machine':
-            machine = self.row(db, 'machines', data.get('id'))
-            if machine['lifecycle'] != 'retired' or db.execute(
-                    'SELECT 1 FROM assignments WHERE machine_id=? AND ended_at IS NULL', (machine['id'],)).fetchone():
-                raise Invalid('Solo puedes eliminar definitivamente una máquina retirada y sin IPs asignadas.')
-            if data.get('created_at') != machine['created_at']:
-                raise Invalid('La ficha ha cambiado. Actualiza antes de eliminarla.')
-            if string(data, 'confirmation', limit=200) != machine['name']:
-                raise Invalid('Escribe el nombre exacto de la máquina para eliminarla.')
-            # Remove the identity and its notes, retaining only anonymous closed
-            # IP usage. Other devices, IP notes, plans and reviews are untouched.
-            db.execute("UPDATE assignments SET machine_id=NULL,reason='',end_reason='' WHERE machine_id=?", (machine['id'],))
-            db.execute('DELETE FROM events WHERE machine_id=? AND ip_id IS NULL', (machine['id'],))
-            db.execute("UPDATE events SET machine_id=NULL,detail='{}' WHERE machine_id=?", (machine['id'],))
-            db.execute('DELETE FROM machines WHERE id=?', (machine['id'],))
-            self.event(db, 'machine_deleted', {})
-            return {}
-
-        if action in ('retire', 'reinstall', 'finish_reinstall', 'restore_machine'):
-            machine = self.row(db, 'machines', data.get('id'))
-            allowed = {'retire': ('active', 'reinstalling'), 'reinstall': ('active',),
-                       'finish_reinstall': ('reinstalling',), 'restore_machine': ('retired',)}
-            if machine['lifecycle'] not in allowed[action]:
-                raise Invalid('El estado actual de la máquina no permite esta acción.')
-            reason = string(data, 'reason', True)
-            state = {'retire': 'retired', 'reinstall': 'reinstalling', 'finish_reinstall': 'active', 'restore_machine': 'active'}[action]
-            if action == 'retire':
-                active = db.execute('SELECT * FROM assignments WHERE machine_id=? AND ended_at IS NULL', (machine['id'],)).fetchall()
-                if 'assignment_ids' in data and data['assignment_ids'] != sorted(r['id'] for r in active):
-                    raise Invalid('Las asignaciones cambiaron. Actualiza y revisa las IPs antes de retirar la máquina.')
-                for row in active:
-                    self.release(db, dict(row), reason)
-            db.execute('UPDATE machines SET lifecycle=?,retired_at=? WHERE id=?',
-                       (state, now() if state == 'retired' else None, machine['id']))
-            self.event(db, action, {'name': machine['name'], 'reason': reason, 'previous': machine['lifecycle']}, machine_id=machine['id'])
-            return {'id': machine['id']}
-
-        if action in ('cancel_plan', 'resolve_review'):
-            table = 'plans' if action == 'cancel_plan' else 'reviews'
-            row = self.row(db, table, data.get('id'))
-            if row['closed_at']:
-                raise Invalid('Este registro ya está cerrado.')
-            reason = string(data, 'reason', True)
-            if action == 'cancel_plan':
-                db.execute("UPDATE plans SET closed_at=?,status='cancelled' WHERE id=?", (now(), row['id']))
-            else:
-                db.execute('UPDATE reviews SET closed_at=?,resolution=? WHERE id=?', (now(), reason, row['id']))
-            self.event(db, action, {'reason': reason, 'record_id': row['id']}, ip_id=row['ip_id'])
-            return {}
-
-        if action not in ('assign', 'plan', 'release', 'review', 'ip_notes'):
-            raise Invalid('Operación desconocida.')
-        ip = self.row(db, 'ips', data.get('ip_id'))
-        assignment = db.execute('SELECT * FROM assignments WHERE ip_id=? AND ended_at IS NULL', (ip['id'],)).fetchone()
-        plan = db.execute("SELECT * FROM plans WHERE ip_id=? AND status='open'", (ip['id'],)).fetchone()
-        review = db.execute('SELECT 1 FROM reviews WHERE ip_id=? AND closed_at IS NULL', (ip['id'],)).fetchone()
-        if action == 'assign':
-            machine = self.row(db, 'machines', data.get('machine_id'))
-            if assignment or review or machine['lifecycle'] != 'active':
-                raise Invalid('La IP o la máquina no está disponible para asignar.')
-            if plan:
-                if data.get('plan_id') != plan['id']:
-                    raise Invalid('Debes ejecutar o cancelar la planificación existente.')
-                db.execute("UPDATE plans SET status='executed',closed_at=? WHERE id=?", (now(), plan['id']))
-                self.event(db, 'plan_executed', {'target': plan['target']}, ip_id=ip['id'], machine_id=machine['id'])
-            elif data.get('plan_id') is not None:
-                raise Invalid('La planificación ya no está abierta.')
-            db.execute('INSERT INTO assignments(ip_id,machine_id,started_at,reason) VALUES(?,?,?,?)',
-                       (ip['id'], machine['id'], now(), string(data, 'reason')))
-            self.event(db, 'assigned', {'address': ip['address'], 'machine': machine['name'], 'reason': string(data, 'reason')}, ip['id'], machine['id'])
-        elif action == 'plan':
-            if assignment or plan or review:
-                raise Invalid('Solo puedes planificar direcciones disponibles.')
-            target, notes = string(data, 'target', True, 200), string(data, 'notes')
-            db.execute('INSERT INTO plans(ip_id,target,notes,created_at) VALUES(?,?,?,?)', (ip['id'], target, notes, now()))
-            self.event(db, 'planned', {'target': target, 'notes': notes}, ip_id=ip['id'])
-        elif action == 'release':
-            if not assignment or data.get('assignment_id') != assignment['id']:
-                raise Invalid('La asignación ha cambiado. Actualiza antes de liberar.')
-            self.release(db, dict(assignment), string(data, 'reason', True))
-        elif action == 'review':
-            reason = string(data, 'reason', True)
-            db.execute('INSERT INTO reviews(ip_id,reason,opened_at) VALUES(?,?,?)', (ip['id'], reason, now()))
-            self.event(db, 'review_opened', {'reason': reason}, ip_id=ip['id'])
-        elif action == 'ip_notes':
-            notes = string(data, 'notes')
-            db.execute('UPDATE ips SET notes=? WHERE id=?', (notes, ip['id']))
-            self.event(db, 'ip_edited', {'before': ip['notes'], 'notes': notes}, ip_id=ip['id'])
-        return {}
-
-    def release(self, db, assignment, reason):
-        db.execute('UPDATE assignments SET ended_at=?,end_reason=? WHERE id=?', (now(), reason, assignment['id']))
-        self.event(db, 'released', {'reason': reason, 'assignment_id': assignment['id']}, assignment['ip_id'], assignment['machine_id'])
-
     def backup(self, target):
         with self.connect() as source:
             destination = sqlite3.connect(target)
@@ -439,3 +204,170 @@ class Store:
                 source.backup(destination)
             finally:
                 destination.close()
+
+    # Lectura
+
+    def state(self):
+        with self.connect() as db:
+            networks = [dict(r) for r in db.execute('SELECT id, cidr, name FROM networks ORDER BY sort_key')]
+            ips = [dict(r) for r in db.execute('SELECT address, device_id, note, claimed_at FROM ips ORDER BY sort_key')]
+            devices = [dict(r) for r in db.execute('SELECT id, name, type, os, note FROM devices ORDER BY name_key')]
+            rows = db.execute('SELECT address, up, checked_at, last_up_at FROM observations').fetchall()
+            watched = set(self._watched(db))
+        observations = {r['address']: {'up': bool(r['up']), 'checked_at': r['checked_at'], 'last_up_at': r['last_up_at']}
+                        for r in rows if r['address'] in watched}
+        return {'networks': networks, 'ips': ips, 'devices': devices, 'observations': observations}
+
+    def watched_addresses(self):
+        with self.connect() as db:
+            return self._watched(db)
+
+    def _watched(self, db):
+        result = set()
+        networks = [ipaddress.IPv4Network(r[0]) for r in db.execute('SELECT cidr FROM networks')]
+        for network in networks:
+            result.update(str(h) for h in network.hosts())
+        result.update(r[0] for r in db.execute('SELECT address FROM ips'))
+        return sorted(result, key=_sort_key)
+
+    # Redes
+
+    def add_network(self, cidr, name=''):
+        network = parse_network(cidr)
+        name = _text({'name': name}, 'name', 60, label='nombre de la red')
+        with self.transaction() as db:
+            existing = [ipaddress.IPv4Network(r[0]) for r in db.execute('SELECT cidr FROM networks')]
+            for other in existing:
+                if network.overlaps(other):
+                    raise Invalid(f'{network} se solapa con {other}, que ya está registrada.')
+            if sum(n.num_addresses for n in existing) + network.num_addresses > MAX_ADDRESSES:
+                raise Invalid(f'Entre todas las redes no pueden pasar de {MAX_ADDRESSES} direcciones.')
+            return db.execute('INSERT INTO networks(cidr, sort_key, name, created_at) VALUES(?,?,?,?)',
+                              (str(network), int(network.network_address), name, now())).lastrowid
+
+    def rename_network(self, network_id, name):
+        name = _text({'name': name}, 'name', 60, label='nombre de la red')
+        with self.transaction() as db:
+            if db.execute('UPDATE networks SET name=? WHERE id=?', (name, _int_id(network_id, 'red'))).rowcount != 1:
+                raise Invalid('Esa red ya no existe.')
+
+    def remove_network(self, network_id):
+        with self.transaction() as db:
+            if db.execute('DELETE FROM networks WHERE id=?', (_int_id(network_id, 'red'),)).rowcount != 1:
+                raise Invalid('Esa red ya no existe.')
+
+    # IPs
+
+    def claim(self, addresses, device=None):
+        targets = parse_addresses(addresses)
+        with self.transaction() as db:
+            device_id = self._resolve_device(db, device) if device is not None else None
+            claimed = assigned = 0
+            for address in targets:
+                row = db.execute('SELECT device_id FROM ips WHERE address=?', (address,)).fetchone()
+                if row is None:
+                    db.execute('INSERT INTO ips(address, sort_key, device_id, claimed_at) VALUES(?,?,?,?)',
+                               (address, _sort_key(address), device_id, now()))
+                    claimed += 1
+                    assigned += device_id is not None
+                elif device_id is not None and row['device_id'] != device_id:
+                    db.execute('UPDATE ips SET device_id=? WHERE address=?', (device_id, address))
+                    assigned += 1
+            return {'claimed': claimed, 'assigned': assigned}
+
+    def release(self, addresses):
+        targets = parse_addresses(addresses)
+        with self.transaction() as db:
+            self._require_claimed(db, targets)
+            db.executemany('DELETE FROM ips WHERE address=?', [(a,) for a in targets])
+
+    def unassign(self, addresses):
+        targets = parse_addresses(addresses)
+        with self.transaction() as db:
+            self._require_claimed(db, targets)
+            db.executemany('UPDATE ips SET device_id=NULL WHERE address=?', [(a,) for a in targets])
+
+    def set_note(self, address, note):
+        targets = parse_addresses(address)
+        if len(targets) != 1:
+            raise Invalid('La nota se guarda en una sola IP.')
+        note = _text({'note': note}, 'note', 2000, label='nota')
+        with self.transaction() as db:
+            self._require_claimed(db, targets)
+            db.execute('UPDATE ips SET note=? WHERE address=?', (note, targets[0]))
+
+    def _require_claimed(self, db, targets):
+        for address in targets:
+            if db.execute('SELECT 1 FROM ips WHERE address=?', (address,)).fetchone() is None:
+                raise Invalid(f'{address} no está reclamada.')
+
+    # Equipos
+
+    def _resolve_device(self, db, device):
+        if not isinstance(device, dict):
+            raise Invalid('Equipo inválido.')
+        if 'id' in device:
+            device_id = _int_id(device['id'], 'equipo')
+            if db.execute('SELECT 1 FROM devices WHERE id=?', (device_id,)).fetchone() is None:
+                raise Invalid('Ese equipo ya no existe.')
+            return device_id
+        name = _text(device, 'name', 120, True, 'nombre')
+        row = db.execute('SELECT id FROM devices WHERE name_key=?', (name.casefold(),)).fetchone()
+        if row:
+            return row['id']
+        return self._insert_device(db, _device_fields({'name': name, 'type': device.get('type')}))
+
+    def _insert_device(self, db, fields):
+        try:
+            return db.execute('INSERT INTO devices(name, name_key, type, os, note, created_at) VALUES(?,?,?,?,?,?)',
+                              (fields['name'], fields['name'].casefold(), fields['type'], fields['os'],
+                               fields['note'], now())).lastrowid
+        except sqlite3.IntegrityError:
+            raise Invalid(f'Ya existe un equipo llamado «{fields["name"]}».') from None
+
+    def _set_device_ips(self, db, device_id, targets):
+        current = {r[0] for r in db.execute('SELECT address FROM ips WHERE device_id=?', (device_id,))}
+        for address in current - set(targets):
+            db.execute('UPDATE ips SET device_id=NULL WHERE address=?', (address,))
+        for address in targets:
+            if db.execute('UPDATE ips SET device_id=? WHERE address=?', (device_id, address)).rowcount == 0:
+                db.execute('INSERT INTO ips(address, sort_key, device_id, claimed_at) VALUES(?,?,?,?)',
+                           (address, _sort_key(address), device_id, now()))
+
+    def create_device(self, fields, addresses=()):
+        fields = _device_fields(fields)
+        targets = _optional_addresses(addresses)
+        with self.transaction() as db:
+            device_id = self._insert_device(db, fields)
+            self._set_device_ips(db, device_id, targets)
+            return device_id
+
+    def update_device(self, device_id, fields, addresses):
+        device_id = _int_id(device_id, 'equipo')
+        fields = _device_fields(fields)
+        targets = _optional_addresses(addresses)
+        with self.transaction() as db:
+            if db.execute('SELECT 1 FROM devices WHERE id=?', (device_id,)).fetchone() is None:
+                raise Invalid('Ese equipo ya no existe.')
+            clash = db.execute('SELECT 1 FROM devices WHERE name_key=? AND id<>?',
+                               (fields['name'].casefold(), device_id)).fetchone()
+            if clash:
+                raise Invalid(f'Ya existe un equipo llamado «{fields["name"]}».')
+            db.execute('UPDATE devices SET name=?, name_key=?, type=?, os=?, note=? WHERE id=?',
+                       (fields['name'], fields['name'].casefold(), fields['type'], fields['os'], fields['note'], device_id))
+            self._set_device_ips(db, device_id, targets)
+
+    def delete_device(self, device_id):
+        with self.transaction() as db:
+            if db.execute('DELETE FROM devices WHERE id=?', (_int_id(device_id, 'equipo'),)).rowcount != 1:
+                raise Invalid('Ese equipo ya no existe.')
+
+    # Observaciones (nunca tocan ips ni devices)
+
+    def record_observations(self, results, at):
+        with self.transaction() as db:
+            db.executemany(
+                'INSERT INTO observations(address, up, checked_at, last_up_at) VALUES(?1, ?2, ?3, CASE WHEN ?2 THEN ?3 END) '
+                'ON CONFLICT(address) DO UPDATE SET up=excluded.up, checked_at=excluded.checked_at, '
+                'last_up_at=CASE WHEN excluded.up THEN excluded.checked_at ELSE observations.last_up_at END',
+                [(address, int(bool(up)), at) for address, up in results.items()])
