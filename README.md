@@ -16,6 +16,7 @@ LanClaim manages the addresses you claim. Claiming an IP adds it to your invento
 - Edit device names, operating systems, virtualization platforms and device notes. Schema 3 seeds saved OS/platform choices from existing devices; partial edits preserve legacy metadata.
 - Reinstall or format a machine while retaining its identity and every active IP assignment. Finish maintenance and update its details afterwards.
 - Retire a machine and release its assignments atomically, retaining the machine and assignment records. Reactivation does not silently restore old assignments.
+- Permanently delete a retired device after typing its exact name. Its record and device notes are removed, while IPs remain claimed and closed usage dates become anonymous so addresses stay reusable. Active devices cannot be deleted; existing backups and reusable OS/platform choices remain unchanged. Schema 4 migrates existing assignments without losing records and prevents deleted device IDs from being reused.
 - Use clear Start/Finish reinstallation, Release assignment and Change assigned device actions, with visible state transitions before confirmation. History screens and links are removed from the interface; existing stored records are retained.
 - Review discrepancies manually without losing existing assignments or plans.
 - Store inventory and audit history in SQLite, independently of the browser. There are no Python runtime package dependencies; manual scans use the operating system's `ping` executable.

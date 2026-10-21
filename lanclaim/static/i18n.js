@@ -418,6 +418,19 @@ Object.assign(english, {
   "Ver IP": "Open IP",
   "Añadir equipo": "Add device",
   "Reclamar IP": "Claim IP",
+  "Eliminar definitivamente": "Delete permanently",
+  "Se borrarán la ficha del equipo, sus datos y sus notas. Sus IPs seguirán reclamadas en tu inventario.":
+    "The device record, its data and its notes will be deleted. Its IPs will remain claimed in your inventory.",
+  "Esta acción no se puede deshacer desde la aplicación. Las copias de seguridad existentes no se modifican.":
+    "This action cannot be undone in the app. Existing backups are unchanged.",
+  "Escribe el nombre del equipo para confirmar": "Type the device name to confirm",
+  "Máquina eliminada definitivamente.": "Device permanently deleted.",
+  "Solo puedes eliminar definitivamente una máquina retirada y sin IPs asignadas.":
+    "You can only permanently delete a retired device with no assigned IPs.",
+  "La ficha ha cambiado. Actualiza antes de eliminarla.":
+    "The record has changed. Refresh before deleting it.",
+  "Escribe el nombre exacto de la máquina para eliminarla.":
+    "Type the exact device name to delete it.",
   "Reclamar esta IP": "Claim this IP",
   "Se añadirá a Mis IPs como disponible. Puedes asignarle un equipo más adelante.":
     "It will be added to My IPs as available. You can assign a device later.",

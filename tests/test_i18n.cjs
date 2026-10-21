@@ -55,6 +55,8 @@ assert.equal(vm.runInContext("t('Ya hay un escaneo en curso.')", en), "A scan is
 
 assert.equal(vm.runInContext("t('Guardar IP y equipo')", en), "Save IP and device");
 assert.equal(vm.runInContext("t('Reclamar IP')", en), "Claim IP");
+assert.equal(vm.runInContext("t('Eliminar definitivamente')", en), "Delete permanently");
+assert.equal(vm.runInContext("t('Escribe el nombre del equipo para confirmar')", en), "Type the device name to confirm");
 assert.equal(vm.runInContext("t('Reclamar sin equipo')", en), "Claim without a device");
 assert.equal(vm.runInContext("t('Reclamar y añadir equipo')", en), "Claim and add device");
 assert.equal(

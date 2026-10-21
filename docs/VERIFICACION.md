@@ -2,7 +2,7 @@
 
 ## Pruebas ejecutadas
 
-- 52 pruebas Python de dominio, persistencia, concurrencia, recuperación transaccional, API HTTP, detección de interfaces locales, escaneo acotado/cancelable, migración de observaciones guardado atómico de IP/equipo, migración de listas de SO/plataforma, persistencia de opciones y conservación de campos omitidos: aprobadas en Windows con Python 3.14 y Ubuntu 26.04 sobre WSL2 con Python 3.14.
+- 59 pruebas Python de dominio, persistencia, concurrencia, recuperación transaccional, API HTTP, detección de interfaces locales, escaneo acotado/cancelable, migración de observaciones guardado atómico de IP/equipo, migración de listas de SO/plataforma, persistencia de opciones y conservación de campos omitidos: aprobadas en Windows con Python 3.14 y Ubuntu 26.04 sobre WSL2 con Python 3.14.
 - Pruebas de traducción ES/EN con Node: etiquetas, errores, texto con saltos de línea, plantillas y conservación literal del contenido del usuario.
 - Sintaxis JavaScript y Bash; ShellCheck para los scripts de instalación, actualización, desinstalación y prueba de ciclo de vida.
 - Integración en contenedor Ubuntu 24.04: instalación, repetición sin pérdida de datos, actualización, fallo simulado de migración que modifica la base, recuperación de código y datos, desinstalación conservando datos, reinstalación y cancelación/confirmación de purga. Se ejecuta el servidor real con el UID del servicio mediante un adaptador de `systemctl` exclusivo de pruebas.
@@ -19,6 +19,8 @@ Las etiquetas de estado y conectividad usan ahora fondos oscuros teñidos, borde
 Se reprodujo el fallo de ping en un proceso Python sin privilegios con `NoNewPrivileges` y `net.ipv4.ping_group_range=1 0`. Con únicamente `CAP_NET_RAW`, la comprobación de loopback responde. El ciclo de vida completo pasó tanto con el rango ICMP normal como restringido; la cuenta del servidor mantiene UID no root, NoNewPrivileges y solo CAP_NET_RAW en los conjuntos efectivo y límite. Se verificó además una unidad transitoria de systemd real en WSL2 con esas restricciones y ping a loopback; esta comprobación no certifica el despliegue completo del servicio. Los mensajes ES/EN distinguen permisos, falta de ruta y tiempo del proceso agotado.
 
 Reclamación visible por IP: verificados en un inventario aislado el botón «Reclamar IP» de cada fila, la reclamación sin crear máquina, la alternativa «Reclamar sin equipo» incluso tras validar un nombre vacío, la reclamación con alta de equipo y la selección por lotes. La primera vista de una dirección sin reclamar no contiene campos obligatorios. Comprobados textos ES/EN; en el inventario real solo se abrió la vista previa, sin reclamar ni modificar direcciones.
+
+Eliminación definitiva de máquinas retiradas: verificadas confirmación de nombre e identidad, rechazo de máquinas activas/reactivadas o con asignaciones, recuperación transaccional ante un fallo y conservación de reclamaciones, reutilización, otras máquinas, planes, revisiones y notas de IP. La migración 3→4 conserva asignaciones activas/cerradas, claves externas y restricciones; los identificadores eliminados no se reutilizan. Se revisaron en navegador ES/EN el bloqueo del botón hasta escribir el nombre exacto y Cancelar/Volver. El borrado HTTP se ejercitó solo en un inventario aislado, comprobando CSRF y la desaparición de la ficha. La base local se respaldó antes de migrar y se compararon todas sus filas existentes: idénticas tras la migración, sin borrar máquinas reales.
 
 ## Límites de la verificación
 

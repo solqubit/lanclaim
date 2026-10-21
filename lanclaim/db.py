@@ -15,6 +15,20 @@ def now():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+ASSIGNMENT_GUARDS = """
+CREATE TRIGGER assignment_guard BEFORE INSERT ON assignments WHEN NEW.ended_at IS NULL BEGIN
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM plans WHERE ip_id=NEW.ip_id AND status='open')
+ OR EXISTS(SELECT 1 FROM reviews WHERE ip_id=NEW.ip_id AND closed_at IS NULL)
+ OR NOT EXISTS(SELECT 1 FROM machines WHERE id=NEW.machine_id AND lifecycle='active')
+ THEN RAISE(ABORT,'La IP o la máquina no permite esta asignación') END;
+END;
+CREATE TRIGGER plan_guard BEFORE INSERT ON plans WHEN NEW.status='open' BEGIN
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM assignments WHERE ip_id=NEW.ip_id AND ended_at IS NULL)
+ OR EXISTS(SELECT 1 FROM reviews WHERE ip_id=NEW.ip_id AND closed_at IS NULL)
+ THEN RAISE(ABORT,'La IP no está disponible') END;
+END;
+"""
+
 SCHEMA = """
 CREATE TABLE ips (
  id INTEGER PRIMARY KEY, address TEXT NOT NULL UNIQUE, family INTEGER NOT NULL,
@@ -50,19 +64,7 @@ CREATE TABLE events (
 );
 CREATE INDEX events_ip ON events(ip_id,id);
 CREATE INDEX events_machine ON events(machine_id,id);
-CREATE TRIGGER assignment_guard BEFORE INSERT ON assignments WHEN NEW.ended_at IS NULL BEGIN
- SELECT CASE WHEN EXISTS(SELECT 1 FROM plans WHERE ip_id=NEW.ip_id AND status='open')
- OR EXISTS(SELECT 1 FROM reviews WHERE ip_id=NEW.ip_id AND closed_at IS NULL)
- OR NOT EXISTS(SELECT 1 FROM machines WHERE id=NEW.machine_id AND lifecycle='active')
- THEN RAISE(ABORT,'La IP o la máquina no permite esta asignación') END;
-END;
-CREATE TRIGGER plan_guard BEFORE INSERT ON plans WHEN NEW.status='open' BEGIN
- SELECT CASE WHEN EXISTS(SELECT 1 FROM assignments WHERE ip_id=NEW.ip_id AND ended_at IS NULL)
- OR EXISTS(SELECT 1 FROM reviews WHERE ip_id=NEW.ip_id AND closed_at IS NULL)
- THEN RAISE(ABORT,'La IP no está disponible') END;
-END;
-PRAGMA user_version=1;
-"""
+""" + ASSIGNMENT_GUARDS + 'PRAGMA user_version=1;\n'
 
 MACHINE_FIELDS = ('name', 'description', 'os', 'hostname', 'mac', 'platform', 'vm_id', 'tags', 'notes')
 
@@ -115,7 +117,7 @@ class Store:
         with self.connect() as db:
             db.execute('PRAGMA journal_mode=WAL')
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version > 3:
+            if version > 4:
                 raise RuntimeError('La base de datos requiere una versión más reciente de LanClaim.')
             if version == 0:
                 db.executescript('BEGIN IMMEDIATE;\n' + SCHEMA + '\nCOMMIT;')
@@ -139,6 +141,30 @@ class Store:
                     INSERT OR IGNORE INTO machine_choices SELECT 'os', TRIM(os) FROM machines WHERE TRIM(os) != '';
                     INSERT OR IGNORE INTO machine_choices SELECT 'platform', TRIM(platform) FROM machines WHERE TRIM(platform) != '';
                     PRAGMA user_version=3;
+                    COMMIT;""")
+
+            if version < 4:
+                # Closed IP usage can outlive a deliberately deleted machine.
+                # Keep dates and reuse eligibility, but require a device for any
+                # live assignment. Rebuild both guards in the same transaction.
+                db.executescript("""BEGIN IMMEDIATE;
+                    CREATE TABLE identity_counters (
+                        name TEXT PRIMARY KEY, value INTEGER NOT NULL CHECK(value >= 0)
+                    );
+                    INSERT INTO identity_counters VALUES('machine_id',(SELECT COALESCE(MAX(id),0) FROM machines));
+                    DROP TRIGGER plan_guard;
+                    CREATE TABLE assignments_next (
+                        id INTEGER PRIMARY KEY, ip_id INTEGER NOT NULL REFERENCES ips(id),
+                        machine_id INTEGER REFERENCES machines(id), started_at TEXT NOT NULL,
+                        ended_at TEXT, reason TEXT NOT NULL DEFAULT '', end_reason TEXT,
+                        CHECK(machine_id IS NOT NULL OR ended_at IS NOT NULL)
+                    );
+                    INSERT INTO assignments_next SELECT * FROM assignments;
+                    DROP TABLE assignments;
+                    ALTER TABLE assignments_next RENAME TO assignments;
+                    CREATE UNIQUE INDEX one_active_assignment ON assignments(ip_id) WHERE ended_at IS NULL;
+                    """ + ASSIGNMENT_GUARDS + """
+                    PRAGMA user_version=4;
                     COMMIT;""")
 
     def observe(self, address, status):
@@ -294,9 +320,11 @@ class Store:
             if fields['mac'] and not re.fullmatch(r'(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}', fields['mac']):
                 raise Invalid('La MAC debe tener seis pares hexadecimales, por ejemplo AA:BB:CC:DD:EE:FF.')
             if action == 'create_machine':
-                cur = db.execute(f'INSERT INTO machines({",".join(MACHINE_FIELDS)},created_at) VALUES({",".join("?" for _ in range(10))})',
-                                 (*fields.values(), now()))
-                ident = cur.lastrowid
+                # Deleted IDs must not become targets for stale edit/retire tabs.
+                db.execute("UPDATE identity_counters SET value=value+1 WHERE name='machine_id'")
+                ident = db.execute("SELECT value FROM identity_counters WHERE name='machine_id'").fetchone()[0]
+                db.execute(f'INSERT INTO machines(id,{",".join(MACHINE_FIELDS)},created_at) VALUES({",".join("?" for _ in range(11))})',
+                           (ident, *fields.values(), now()))
                 self.event(db, 'machine_created', fields, machine_id=ident)
             else:
                 ident = data.get('id')
@@ -309,6 +337,24 @@ class Store:
                 if fields[field]:
                     db.execute('INSERT OR IGNORE INTO machine_choices(field,value) VALUES(?,?)', (field, fields[field]))
             return {'id': ident}
+
+        if action == 'delete_machine':
+            machine = self.row(db, 'machines', data.get('id'))
+            if machine['lifecycle'] != 'retired' or db.execute(
+                    'SELECT 1 FROM assignments WHERE machine_id=? AND ended_at IS NULL', (machine['id'],)).fetchone():
+                raise Invalid('Solo puedes eliminar definitivamente una máquina retirada y sin IPs asignadas.')
+            if data.get('created_at') != machine['created_at']:
+                raise Invalid('La ficha ha cambiado. Actualiza antes de eliminarla.')
+            if string(data, 'confirmation', limit=200) != machine['name']:
+                raise Invalid('Escribe el nombre exacto de la máquina para eliminarla.')
+            # Remove the identity and its notes, retaining only anonymous closed
+            # IP usage. Other devices, IP notes, plans and reviews are untouched.
+            db.execute("UPDATE assignments SET machine_id=NULL,reason='',end_reason='' WHERE machine_id=?", (machine['id'],))
+            db.execute('DELETE FROM events WHERE machine_id=? AND ip_id IS NULL', (machine['id'],))
+            db.execute("UPDATE events SET machine_id=NULL,detail='{}' WHERE machine_id=?", (machine['id'],))
+            db.execute('DELETE FROM machines WHERE id=?', (machine['id'],))
+            self.event(db, 'machine_deleted', {})
+            return {}
 
         if action in ('retire', 'reinstall', 'finish_reinstall', 'restore_machine'):
             machine = self.row(db, 'machines', data.get('id'))

@@ -87,6 +87,7 @@ Si la recuperación automática no logra arrancar el servicio:
 - **Mi espacio de IPs:** gestiona reclamaciones persistentes y disponibilidad administrativa. CIDR incluye extremos; no asignes direcciones de red/broadcast donde tu red no lo permita.
 - **Reinstalar / formatear:** conserva máquina e IPs. Al finalizar, edita la ficha y marca la reinstalación como terminada.
 - **Retirar:** cierra asignaciones conservando historial; las IPs vuelven a disponibles salvo revisiones abiertas.
+- **Eliminar definitivamente:** en Máquinas, abre una ficha retirada y pulsa esta acción. Escribe el nombre exacto para confirmar o utiliza Cancelar/Volver. Borra la ficha y sus notas y anonimiza su uso anterior de IPs, conservando reclamaciones y disponibilidad. Se bloquea si la máquina está activa, fue reactivada o todavía tiene asignaciones. Las copias anteriores conservan su contenido; no hay recuperación directa desde la aplicación.
 - **Idioma:** selector Español/English en la barra superior. Se recuerda en el navegador; el inventario permanece en el servidor. Cambiar de idioma recarga la vista.
 
 Solo hay un espacio administrativo en esta versión: no permite registrar la misma dirección en redes aisladas distintas. No hay descubrimiento activo, autenticación multiusuario ni importación de inventarios externos.
