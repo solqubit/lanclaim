@@ -39,6 +39,7 @@ export const EN = {
   "Buscar equipo, SO o IP…": "Search device, OS or IP…",
   "No se pudo cargar LanClaim": "LanClaim could not load",
   "Reintentar": "Retry",
+  "Tienes cambios sin guardar. Pulsa Cancelar para descartarlos.": "You have unsaved changes. Press Cancel to discard them.",
   "Guardar": "Save",
   "Cancelar": "Cancel",
   "Cerrar": "Close",

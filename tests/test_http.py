@@ -85,7 +85,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(ip['device_id'], device['id'])
         self.assertIn('csrf', state)
         code, state = self.post('/api/devices/update', {'id': device['id'], 'name': 'glpi', 'type': 'vm', 'os': 'Debian 12',
-                                                        'note': '', 'addresses': ['192.168.50.10', '192.168.50.11']})
+                                                        'note': '', 'add': ['192.168.50.11'], 'remove': []})
         self.assertEqual(code, 200)
         self.assertEqual(len([i for i in state['ips'] if i['device_id'] == device['id']]), 2)
         code, state = self.post('/api/ips/note', {'address': '192.168.50.11', 'note': 'hola'})

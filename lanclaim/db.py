@@ -228,7 +228,23 @@ class Store:
         for network in networks:
             result.update(str(h) for h in network.hosts())
         result.update(r[0] for r in db.execute('SELECT address FROM ips'))
-        return sorted(result, key=_sort_key)
+        edges = self._edges(db)
+        return sorted((a for a in result if a not in edges), key=_sort_key)
+
+    def _edges(self, db):
+        """Direcciones de red y broadcast de las redes registradas: no son de equipos."""
+        edges = set()
+        for (cidr,) in db.execute('SELECT cidr FROM networks'):
+            network = ipaddress.IPv4Network(cidr)
+            if network.prefixlen < 31:
+                edges.update((str(network.network_address), str(network.broadcast_address)))
+        return edges
+
+    def _reject_edges(self, db, targets):
+        edges = self._edges(db)
+        for address in targets:
+            if address in edges:
+                raise Invalid(f'{address} es la dirección de red o de broadcast de una red registrada.')
 
     # Redes
 
@@ -261,6 +277,7 @@ class Store:
     def claim(self, addresses, device=None):
         targets = parse_addresses(addresses)
         with self.transaction() as db:
+            self._reject_edges(db, targets)
             device_id = self._resolve_device(db, device) if device is not None else None
             claimed = assigned = 0
             for address in targets:
@@ -325,11 +342,13 @@ class Store:
         except sqlite3.IntegrityError:
             raise Invalid(f'Ya existe un equipo llamado «{fields["name"]}».') from None
 
-    def _set_device_ips(self, db, device_id, targets):
-        current = {r[0] for r in db.execute('SELECT address FROM ips WHERE device_id=?', (device_id,))}
-        for address in current - set(targets):
-            db.execute('UPDATE ips SET device_id=NULL WHERE address=?', (address,))
-        for address in targets:
+    def _change_device_ips(self, db, device_id, add, remove):
+        """Aplica altas y bajas sobre las filas actuales, no sobre una copia antigua del formulario."""
+        self._reject_edges(db, add)
+        for address in remove:
+            if address not in add:
+                db.execute('UPDATE ips SET device_id=NULL WHERE address=? AND device_id=?', (address, device_id))
+        for address in add:
             if db.execute('UPDATE ips SET device_id=? WHERE address=?', (device_id, address)).rowcount == 0:
                 db.execute('INSERT INTO ips(address, sort_key, device_id, claimed_at) VALUES(?,?,?,?)',
                            (address, _sort_key(address), device_id, now()))
@@ -339,13 +358,13 @@ class Store:
         targets = _optional_addresses(addresses)
         with self.transaction() as db:
             device_id = self._insert_device(db, fields)
-            self._set_device_ips(db, device_id, targets)
+            self._change_device_ips(db, device_id, targets, [])
             return device_id
 
-    def update_device(self, device_id, fields, addresses):
+    def update_device(self, device_id, fields, add=(), remove=()):
         device_id = _int_id(device_id, 'equipo')
         fields = _device_fields(fields)
-        targets = _optional_addresses(addresses)
+        add, remove = _optional_addresses(add), _optional_addresses(remove)
         with self.transaction() as db:
             if db.execute('SELECT 1 FROM devices WHERE id=?', (device_id,)).fetchone() is None:
                 raise Invalid('Ese equipo ya no existe.')
@@ -355,7 +374,7 @@ class Store:
                 raise Invalid(f'Ya existe un equipo llamado «{fields["name"]}».')
             db.execute('UPDATE devices SET name=?, name_key=?, type=?, os=?, note=? WHERE id=?',
                        (fields['name'], fields['name'].casefold(), fields['type'], fields['os'], fields['note'], device_id))
-            self._set_device_ips(db, device_id, targets)
+            self._change_device_ips(db, device_id, add, remove)
 
     def delete_device(self, device_id):
         with self.transaction() as db:

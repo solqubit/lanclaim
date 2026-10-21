@@ -210,6 +210,11 @@ function boot() {
       if (typing && document.activeElement.id !== "q") {
         document.activeElement.blur();
       }
+      // Un formulario con cambios sin guardar no se descarta con Escape: hay que pulsar Cancelar.
+      if (root().querySelector(".card.form [data-dirty], #net-form [data-dirty]")) {
+        toast(t("Tienes cambios sin guardar. Pulsa Cancelar para descartarlos."));
+        return;
+      }
       ui.sel.clear();
       ui.addingNet = false;
       ui.editNet = null;

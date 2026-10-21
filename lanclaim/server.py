@@ -40,7 +40,7 @@ class Server(ThreadingHTTPServer):
             'ips/unassign': lambda d: store.unassign(d.get('addresses')),
             'ips/note': lambda d: store.set_note(d.get('address'), d.get('note', '')),
             'devices/create': lambda d: store.create_device(d, d.get('addresses')),
-            'devices/update': lambda d: store.update_device(d.get('id'), d, d.get('addresses')),
+            'devices/update': lambda d: store.update_device(d.get('id'), d, d.get('add'), d.get('remove')),
             'devices/delete': lambda d: store.delete_device(d.get('id')),
             'scan/now': lambda d: scanner.scan_now(),
         }

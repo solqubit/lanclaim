@@ -17,7 +17,12 @@ PING_PERMISSION_ERROR = 'El servicio no tiene permisos para usar ping. Actualiza
 PING_TIMEOUT_ERROR = 'Ping no terminó a tiempo. Revisa la carga y la red del servidor.'
 PING_NETWORK_ERROR = 'El servidor no tiene una ruta hacia esa red. Revisa su interfaz, gateway o red virtual.'
 GENERIC_ERROR = 'No se pudo completar el escaneo. Revisa el registro del servicio.'
+MISSING_PING = 'No se encontró ping. Instala iputils-ping o iputils en el servidor.'
 BATCH = 16
+
+
+class PingUnavailable(Invalid):
+    """Ping no puede funcionar en este servidor (permisos, binario): no tiene sentido seguir el ciclo."""
 
 
 def ping(address):
@@ -25,7 +30,7 @@ def ping(address):
     address = str(ipaddress.IPv4Address(address))
     executable = shutil.which('ping')
     if not executable:
-        raise Invalid('No se encontró ping. Instala iputils-ping o iputils en el servidor.')
+        raise PingUnavailable(MISSING_PING)
     windows = sys.platform == 'win32'
     args = [executable, '-4', '-n', '1', '-w', '1000', address] if windows else [
         executable, '-n', '-c', '1', '-W', '1', address]
@@ -34,9 +39,9 @@ def ping(address):
                                 env=None if windows else {**os.environ, 'LC_ALL': 'C'},
                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0) if windows else 0)
     except PermissionError as exc:
-        raise Invalid(PING_PERMISSION_ERROR) from exc
+        raise PingUnavailable(PING_PERMISSION_ERROR) from exc
     except FileNotFoundError as exc:
-        raise Invalid('No se encontró ping. Instala iputils-ping o iputils en el servidor.') from exc
+        raise PingUnavailable(MISSING_PING) from exc
     except subprocess.TimeoutExpired as exc:
         raise Invalid(PING_TIMEOUT_ERROR) from exc
     except OSError as exc:
@@ -45,10 +50,11 @@ def ping(address):
         # Keep diagnostics in the service log; only actionable, translated errors
         # are exposed in the UI. A local failure is never a no-response result.
         detail = result.stderr.decode('utf-8', errors='replace')[:1000]
-        logging.getLogger(__name__).warning('ping exited with status %s: %s', result.returncode, detail.strip())
+        # Debug only: one failing wave would otherwise write a warning per address and per cycle.
+        log.debug('ping %s exited with status %s: %s', address, result.returncode, detail.strip())
         detail = detail.lower()
         if any(message in detail for message in ('operation not permitted', 'permission denied', 'cap_net_raw')):
-            raise Invalid(PING_PERMISSION_ERROR)
+            raise PingUnavailable(PING_PERMISSION_ERROR)
         if any(message in detail for message in ('network is unreachable', 'no route to host')):
             raise Invalid(PING_NETWORK_ERROR)
         raise Invalid('No se pudo ejecutar ping. Revisa los permisos y la red del servidor.')
@@ -105,6 +111,7 @@ class Scanner:
 
     def _cycle(self):
         error = ''
+        skipped = []
         try:
             targets = self.store.watched_addresses()
             with self.lock:
@@ -119,7 +126,13 @@ class Scanner:
                         address = next(pending, None)
                     if address is None:
                         break
-                    batch[address] = self.probe(address) == 'responding'
+                    try:
+                        batch[address] = self.probe(address) == 'responding'
+                    except PingUnavailable:
+                        raise
+                    except Invalid as exc:
+                        # Fallo de una sola dirección (sin ruta, broadcast…): sin observación, el ciclo sigue.
+                        skipped.append((address, str(exc)))
                     with self.lock:
                         self.job['done'] += 1
                     if len(batch) >= BATCH:
@@ -146,6 +159,8 @@ class Scanner:
         except Exception as exc:
             error = GENERIC_ERROR
             log.error('Escaneo fallido: %s', type(exc).__name__, exc_info=exc)
+        if skipped:
+            log.info('%d direcciones sin resultado de ping (p. ej. %s: %s)', len(skipped), *skipped[0])
         with self.lock:
             if error and error != self.job['error']:
                 log.warning('%s', error)

@@ -131,6 +131,8 @@ function focusForm() {
 
 function deviceForm(state, d) {
   const addresses = d ? deviceIps(state, d.id) : ui.newDevAddress ? [ui.newDevAddress] : [];
+  // Lo que había al abrir: al guardar se envían solo altas y bajas, para no deshacer cambios de otra pestaña.
+  const original = d ? [...addresses] : [];
   const name = el("input", { class: "in", value: d ? d.name : "", maxlength: 120, placeholder: t("Nombre, p. ej. glpi"), "aria-label": t("Nombre"), oninput: markDirty });
   const type = el(
     "select",
@@ -185,17 +187,20 @@ function deviceForm(state, d) {
     if (picker.value) addIps([picker.value]);
   });
   const typed = el("input", { class: "in mono", placeholder: t("o escribe una IP o rango"), "aria-label": t("Escribir IP o rango") });
+  // Devuelve false si el texto no es válido, para que Guardar no siga sin esa IP.
   const addTyped = () => {
     const text = typed.value.trim();
-    if (!text) return;
+    if (!text) return true;
     const parts = text.split(/[\s,;]+/).filter(Boolean);
     const bad = parts.filter((p) => !/^\d{1,3}(\.\d{1,3}){3}(-\d{1,3}(\.\d{1,3}){0,3})?(\/\d{1,2})?$/.test(p));
     if (bad.length) {
       toast(t("«{text}» no parece una IP válida.", { text: bad[0] }), "error");
-      return;
+      typed.focus();
+      return false;
     }
     typed.value = "";
     addIps(parts);
+    return true;
   };
   typed.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -216,11 +221,13 @@ function deviceForm(state, d) {
       name.focus();
       return;
     }
-    if (typed.value.trim()) addTyped();
-    const body = { name: name.value, type: type.value, os: os.value, note: note.value, addresses };
+    if (!addTyped()) return;
+    const body = { name: name.value, type: type.value, os: os.value, note: note.value };
+    const add = addresses.filter((a) => !original.includes(a));
+    const remove = original.filter((a) => !addresses.includes(a));
     const ok = d
-      ? await act("devices/update", { id: d.id, ...body }, t("{name} guardado", { name: name.value.trim() }))
-      : await act("devices/create", body, t("{name} creado", { name: name.value.trim() }));
+      ? await act("devices/update", { id: d.id, ...body, add, remove }, t("{name} guardado", { name: name.value.trim() }))
+      : await act("devices/create", { ...body, addresses }, t("{name} creado", { name: name.value.trim() }));
     if (ok) {
       ui.editDev = null;
       ui.newDevAddress = null;

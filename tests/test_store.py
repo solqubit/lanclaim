@@ -127,20 +127,53 @@ class StoreTests(unittest.TestCase):
     def test_update_device_manages_ips(self):
         did = self.store.create_device({'name': 'k3s', 'type': 'vm'}, ['192.168.1.10', '192.168.1.11'])
         self.store.update_device(did, {'name': 'k3s-node-1', 'type': 'vm', 'os': 'Ubuntu 24.04', 'note': ''},
-                                 ['192.168.1.11', '192.168.1.12'])
+                                 add=['192.168.1.12'], remove=['192.168.1.10'])
         self.assertIsNone(self.ip('192.168.1.10')['device_id'])
         self.assertEqual(self.ip('192.168.1.11')['device_id'], did)
         self.assertEqual(self.ip('192.168.1.12')['device_id'], did)
         self.assertEqual(self.device_named('k3s-node-1')['os'], 'Ubuntu 24.04')
 
+    def test_update_device_applies_changes_to_current_rows(self):
+        # Two tabs: B changes glpi's IPs while A still has an old form open.
+        glpi = self.store.create_device({'name': 'glpi', 'type': 'vm'}, ['192.168.1.10', '192.168.1.11'])
+        nas = self.store.create_device({'name': 'nas', 'type': 'fisica'})
+        self.store.claim(['192.168.1.12'], {'id': glpi})
+        self.store.claim(['192.168.1.10'], {'id': nas})
+        self.store.release(['192.168.1.11'])
+        # A saves only an OS change: nothing B did is undone.
+        self.store.update_device(glpi, {'name': 'glpi', 'type': 'vm', 'os': 'Debian 12'})
+        self.assertEqual(self.ip('192.168.1.10')['device_id'], nas)
+        self.assertEqual(self.ip('192.168.1.12')['device_id'], glpi)
+        self.assertIsNone(self.ip('192.168.1.11'))
+        # A removes .10 (already moved by B): it stays with nas. A adds .13: claimed for glpi.
+        self.store.update_device(glpi, {'name': 'glpi', 'type': 'vm'}, add=['192.168.1.13'], remove=['192.168.1.10'])
+        self.assertEqual(self.ip('192.168.1.10')['device_id'], nas)
+        self.assertEqual(self.ip('192.168.1.13')['device_id'], glpi)
+        self.store.update_device(glpi, {'name': 'glpi', 'type': 'vm'}, remove=['192.168.1.12', '192.168.1.99'])
+        self.assertIsNone(self.ip('192.168.1.12')['device_id'])
+        self.assertIsNone(self.ip('192.168.1.99'))
+
+    def test_network_edges_cannot_be_claimed(self):
+        self.store.add_network('192.168.1.0/24')
+        for bad in ('192.168.1.0', '192.168.1.255', '192.168.1.250-255'):
+            with self.subTest(bad=bad), self.assertRaises(Invalid):
+                self.store.claim(bad)
+        with self.assertRaises(Invalid):
+            self.store.create_device({'name': 'x', 'type': 'vm'}, ['192.168.1.255'])
+        self.assertEqual(self.store.state()['ips'], [])
+        # An edge claimed before its network was registered is never pinged.
+        self.store.claim('10.0.0.0')
+        self.store.add_network('10.0.0.0/30')
+        self.assertNotIn('10.0.0.0', self.store.watched_addresses())
+
     def test_update_device_rejects_bad_address_atomically(self):
         did = self.store.create_device({'name': 'k3s', 'type': 'vm'}, ['192.168.1.10', '192.168.1.11'])
         with self.assertRaises(Invalid):
-            self.store.update_device(did, {'name': 'Nuevo', 'type': 'vm'}, ['192.168.1.11', 'fe80::1'])
+            self.store.update_device(did, {'name': 'Nuevo', 'type': 'vm'}, add=['fe80::1'], remove=['192.168.1.10'])
         self.assertEqual(self.store.state()['devices'][0]['name'], 'k3s')
         self.assertEqual(self.ip('192.168.1.10')['device_id'], did)
         with self.assertRaises(Invalid):
-            self.store.update_device(999, {'name': 'x', 'type': 'vm'}, [])
+            self.store.update_device(999, {'name': 'x', 'type': 'vm'})
 
     def test_device_validation(self):
         self.store.create_device({'name': 'GLPI', 'type': 'vm'})
@@ -151,8 +184,8 @@ class StoreTests(unittest.TestCase):
             with self.subTest(fields=fields), self.assertRaises(Invalid):
                 self.store.create_device(fields)
         with self.assertRaises(Invalid):
-            self.store.update_device(other, {'name': 'Glpi', 'type': 'fisica'}, [])
-        self.store.update_device(other, {'name': 'NAS', 'type': 'fisica'}, [])  # own name, new case
+            self.store.update_device(other, {'name': 'Glpi', 'type': 'fisica'})
+        self.store.update_device(other, {'name': 'NAS', 'type': 'fisica'})  # own name, new case
         self.assertEqual(len(self.store.state()['devices']), 2)
 
     def test_delete_device_keeps_ips_reserved(self):

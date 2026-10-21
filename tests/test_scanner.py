@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lanclaim.db import Invalid, Store
-from lanclaim.scanner import PING_PERMISSION_ERROR, Scanner, ping
+from lanclaim.scanner import PING_NETWORK_ERROR, PING_PERMISSION_ERROR, PingUnavailable, Scanner, ping
 
 
 def wait_idle(scanner, timeout=5):
@@ -69,7 +69,7 @@ class ScannerTests(unittest.TestCase):
 
     def test_probe_error_is_reported_and_loop_survives(self):
         def broken(address):
-            raise Invalid(PING_PERMISSION_ERROR)
+            raise PingUnavailable(PING_PERMISSION_ERROR)
 
         self.scanner.probe = broken
         self.scanner.scan_now()
@@ -79,6 +79,20 @@ class ScannerTests(unittest.TestCase):
         self.scanner.probe = self.fake
         self.scanner.scan_now()
         self.assertEqual(wait_idle(self.scanner)['error'], '')
+
+    def test_per_address_error_does_not_stop_cycle(self):
+        def flaky(address):
+            if address == '10.0.0.3':
+                raise Invalid(PING_NETWORK_ERROR)
+            return 'responding'
+
+        self.scanner.probe = flaky
+        self.scanner.scan_now()
+        status = wait_idle(self.scanner)
+        self.assertEqual((status['done'], status['error']), (6, ''))
+        obs = self.store.state()['observations']
+        self.assertNotIn('10.0.0.3', obs)
+        self.assertEqual(len(obs), 5)
 
     def test_unexpected_error_is_generic(self):
         def crash(address):
@@ -156,3 +170,17 @@ class PingTests(unittest.TestCase):
         run.return_value = subprocess.CompletedProcess([], 2, b'', b'ping: connect: Network is unreachable')
         with self.assertRaisesRegex(Invalid, 'no tiene una ruta'):
             ping('192.0.2.1')
+
+    @patch('lanclaim.scanner.shutil.which', return_value='/usr/bin/ping')
+    @patch('lanclaim.scanner.sys.platform', 'linux')
+    @patch('lanclaim.scanner.subprocess.run')
+    def test_ping_failures_do_not_log_warnings_per_call(self, run, which):
+        run.return_value = subprocess.CompletedProcess([], 2, b'', b'ping: socket: Operation not permitted')
+        with self.assertNoLogs('lanclaim.scanner', level='WARNING'):
+            with self.assertRaises(PingUnavailable):
+                ping('127.0.0.1')
+        run.return_value = subprocess.CompletedProcess([], 2, b'', b'Do you want to ping broadcast? Then -b.')
+        with self.assertNoLogs('lanclaim.scanner', level='WARNING'):
+            with self.assertRaises(Invalid) as ctx:
+                ping('192.168.1.255')
+        self.assertNotIsInstance(ctx.exception, PingUnavailable)
