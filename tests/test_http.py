@@ -66,6 +66,21 @@ class HttpTests(unittest.TestCase):
         for path in ('/../lanclaim/db.py', '/data/lanclaim.sqlite3', '/unknown'):
             self.assertEqual(self.request(path)[0], 404)
 
+    def test_scan_api_auth_validation_and_results(self):
+        headers = {'X-CSRF-Token': self.server.csrf, 'Content-Type': 'application/json'}
+        self.assertEqual(self.request('/api/scans/start', 'POST', {'addresses': '127.0.0.1'})[0], 403)
+        self.assertEqual(self.request('/api/scans/cancel', 'POST', {})[0], 403)
+        self.assertEqual(self.request('/api/scans/start', 'POST', [], headers)[0], 400)
+        self.assertEqual(self.request('/api/scans/start', 'POST', {'addresses': '::1'}, headers)[0], 400)
+        before = self.server.store.snapshot()
+        self.server.scanner.probe = lambda address: 'responding'
+        self.assertEqual(self.request('/api/scans/start', 'POST', {'addresses': '127.0.0.1'}, headers)[0], 200)
+        self.server.scanner.thread.join(3)
+        result = json.loads(self.request('/api/scans')[2])
+        self.assertEqual(result['scan']['status'], 'completed')
+        self.assertEqual(result['observations'][0]['status'], 'responding')
+        self.assertEqual(before, self.server.store.snapshot())
+
 
 if __name__ == '__main__':
     unittest.main()

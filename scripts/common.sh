@@ -31,20 +31,20 @@ require_python() {
   /usr/bin/python3 -c 'import sqlite3, sys; assert sys.version_info >= (3, 10)' 2>/dev/null || die 'Se requiere Python 3.10 o superior con sqlite3 en /usr/bin/python3. Consulta docs/OPERACION.md.'
 }
 install_python() {
-  if /usr/bin/python3 -c 'import sqlite3, sys; assert sys.version_info >= (3, 10)' 2>/dev/null && command -v ip >/dev/null; then return; fi
+  if /usr/bin/python3 -c 'import sqlite3, sys; assert sys.version_info >= (3, 10)' 2>/dev/null && command -v ip >/dev/null && command -v ping >/dev/null; then return; fi
   [[ -r /etc/os-release ]] || die 'No se puede identificar la distribución Linux.'
   # Standard operating-system metadata, not application input.
   . /etc/os-release
   printf 'Preparando Python en %s\n' "${PRETTY_NAME:-Linux}"
   if command -v apt-get >/dev/null; then
     apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y python3 iproute2
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python3 iproute2 iputils-ping
   elif command -v dnf >/dev/null; then
-    dnf install -y python3 iproute
+    dnf install -y python3 iproute iputils
   elif command -v zypper >/dev/null; then
-    zypper --non-interactive install python3 python3-sqlite3 iproute2
+    zypper --non-interactive install python3 python3-sqlite3 iproute2 iputils
   elif command -v pacman >/dev/null; then
-    pacman -S --needed --noconfirm python iproute2
+    pacman -S --needed --noconfirm python iproute2 iputils
   else
     die 'Gestor de paquetes no soportado. Instala Python 3.10+ con sqlite3 y repite.'
   fi

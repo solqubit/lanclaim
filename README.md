@@ -1,21 +1,24 @@
 # LanClaim
 
-**Your personal IP space.** Self-hosted IP address management and machine inventory, with a readable dark terminal-inspired interface in Spanish and English.
+**Your personal IP space.** Self-hosted IP address management and machine inventory, with a minimal, readable dark interface in Spanish and English.
 
 LanClaim manages the addresses you claim. Claiming an IP adds it to your inventory; it does not reserve it on a router or prove it is unused on the network. Offline machines keep their assignments.
 
 ## Features
 
-- Browse a subnet or inclusive range in **My network**, select addresses and claim them. Local interface prefixes are suggested without scanning devices.
+- Open **Network**, choose a server interface or enter a range, and scan for ICMP replies. Filter responding addresses and claim them directly from the table.
+- Use **My IPs**, **Machines** and **History** through a compact top navigation; counts stay small and machine details open on demand.
 - Claim individual IPv4/IPv6 addresses, ranges or complete CIDRs, with duplicate detection and a 4096-address batch limit.
 - Track available, planned, assigned and review-required addresses; filter reusable IPs.
 - Record machine names, descriptions, operating systems, hostnames, MACs, virtualization platforms, VM IDs, tags and notes.
 - Reinstall or format a machine while retaining its identity and every active IP assignment. Finish maintenance and update its details afterwards.
 - Retire a machine and release its assignments atomically, retaining the machine and full history. Reactivation does not silently restore old assignments.
 - Review discrepancies manually without losing existing assignments or plans.
-- Store inventory and audit history in SQLite, independently of the browser. There are no runtime package dependencies beyond Python's standard library.
+- Store inventory and audit history in SQLite, independently of the browser. There are no Python runtime package dependencies; manual scans use the operating system's `ping` executable.
 
-Automatic connectivity checks and device discovery are intentionally deferred. Network lists enumerate address space; they do not report online/offline status.
+Manual scanning supports up to 1024 IPv4 addresses with progress and cancellation (16 concurrent probes). CIDR scans skip network/broadcast endpoints for prefixes below /31. Each result retains its timestamp in SQLite, separately from assignments. **No response does not mean free or offline**: a firewall may block ICMP. Periodic scanning, automatic conflict detection and device identity discovery are deferred.
+
+Scanning runs from the server, so VM/WSL2 routing matters. Merely opening a page or selecting a range does not scan it. On restart, completed observations remain; an interrupted scan is not resumed automatically.
 
 ## Run locally
 
@@ -29,7 +32,7 @@ Open [http://127.0.0.1:8080](http://127.0.0.1:8080). On Windows use `python` ins
 
 ## Install on Linux
 
-Requires systemd, Bash and root access for installation. The installer prepares Python and `iproute2` using a supported package manager when needed.
+Requires systemd, Bash and root access for installation. The installer prepares Python, `iproute2` and `ping` (`iputils-ping` or `iputils`) using a supported package manager when needed.
 
 ```bash
 chmod +x install.sh update.sh uninstall.sh

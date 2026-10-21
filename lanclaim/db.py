@@ -115,10 +115,29 @@ class Store:
         with self.connect() as db:
             db.execute('PRAGMA journal_mode=WAL')
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version > 1:
+            if version > 2:
                 raise RuntimeError('La base de datos requiere una versión más reciente de LanClaim.')
             if version == 0:
                 db.executescript('BEGIN IMMEDIATE;\n' + SCHEMA + '\nCOMMIT;')
+            if version < 2:
+                db.executescript("""BEGIN IMMEDIATE;
+                    CREATE TABLE observations (
+                        address TEXT PRIMARY KEY,
+                        status TEXT NOT NULL CHECK(status IN ('responding','no_response')),
+                        checked_at TEXT NOT NULL
+                    );
+                    PRAGMA user_version=2;
+                    COMMIT;""")
+
+    def observe(self, address, status):
+        with self.transaction() as db:
+            db.execute('INSERT INTO observations(address,status,checked_at) VALUES(?,?,?) '
+                       'ON CONFLICT(address) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at',
+                       (address, status, now()))
+
+    def observations(self):
+        with self.connect() as db:
+            return [dict(row) for row in db.execute('SELECT * FROM observations ORDER BY address')]
 
     @contextmanager
     def connect(self):

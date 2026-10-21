@@ -11,89 +11,55 @@
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <aside class="sidebar">
-      <a class="brand" href="#ips"
-        ><img src="/favicon.svg" alt="" width="38" height="38" /><span
-          >LanClaim<small>Tu infraestructura, en orden.</small></span
-        ></a
+    <header class="app-header">
+      <a class="brand" href="#network"
+        ><img src="/favicon.svg" alt="" width="26" height="26" />LanClaim</a
       >
-      <div class="workspace">
-        <span class="workspace-icon">P</span>
-        <div>Espacio personal<small>Inventario local</small></div>
-        <span class="live-dot" title="Datos alojados en tu servidor"></span>
-      </div>
-      <div class="nav-label">ADMINISTRAR</div>
       <nav aria-label="Navegación principal">
-        <button data-nav="ips" class="nav-item active">
-          <span aria-hidden="true">▦</span> Mi espacio de IPs
-          <b id="nav-count">0</b>
+        <button data-nav="network" class="nav-item active">Red</button>
+        <button data-nav="ips" class="nav-item">
+          Mis IPs <b id="nav-count">0</b>
         </button>
-        <button data-nav="network" class="nav-item">
-          <span aria-hidden="true">⊞</span> Mi red
-        </button>
-        <button data-nav="machines" class="nav-item">
-          <span aria-hidden="true">▣</span> Máquinas
-        </button>
-        <button data-nav="history" class="nav-item">
-          <span aria-hidden="true">↺</span> Historial
-        </button>
+        <button data-nav="machines" class="nav-item">Máquinas</button>
+        <button data-nav="history" class="nav-item">Historial</button>
       </nav>
-      <div class="sidebar-note">
-        <span class="note-icon">↳</span
-        ><strong>Tus IPs se quedan contigo.</strong>
-        <p>
-          Libera una asignación y conserva la dirección para tu siguiente
-          máquina.
-        </p>
+      <div class="topbar-controls">
+        <select id="language" aria-label="Idioma">
+          <option value="es">Español</option>
+          <option value="en">English</option>
+        </select>
+        <button class="quiet" id="refresh" aria-label="Actualizar">↻</button>
       </div>
-      <div class="sidebar-bottom">
-        <span class="live-dot"></span> Autoalojado
-        <span id="version">v0.1.0</span>
-      </div>
-    </aside>
+    </header>
     <main>
-      <div class="topbar">
-        <span>PERSONAL / <b id="breadcrumb">ESPACIO DE IPS</b></span>
-        <div class="topbar-controls">
-          <select id="language" aria-label="Idioma">
-            <option value="es">Español</option>
-            <option value="en">English</option></select
-          ><button class="quiet" id="refresh">↻ Actualizar</button>
-        </div>
-      </div>
       <div id="global-error" role="alert" hidden></div>
       <header class="page-heading">
         <div>
-          <div class="eyebrow">UN LUGAR PARA CADA DIRECCIÓN</div>
-          <h1 id="page-title">Mi espacio de IPs</h1>
-          <p id="page-subtitle">
-            Administra lo que es tuyo. Ten claro qué puedes usar después.
-          </p>
+          <h1 id="page-title">Mi red</h1>
+          <p id="page-subtitle">Escanea, revisa y reclama tus direcciones.</p>
         </div>
         <div class="header-actions">
           <button class="secondary" id="new-machine">＋ Nueva máquina</button
-          ><button class="primary" id="claim">＋ Reclamar IPs</button>
+          ><button class="secondary" id="claim">＋ Reclamar IPs</button>
         </div>
       </header>
       <section
         id="stats"
         class="stats"
+        hidden
         aria-label="Resumen del inventario"
       ></section>
-      <div id="content" aria-live="polite">
+      <div id="content">
         <div class="empty">Cargando tu espacio…</div>
       </div>
       <footer>
-        <span
-          >La disponibilidad es administrativa. Una máquina apagada conserva su
-          IP.</span
-        ><span>LanClaim · Mi espacio de IPs</span>
+        <span>Una IP sin respuesta no significa que esté disponible.</span
+        ><span id="version">v0.1.0</span>
       </footer>
     </main>
     <dialog id="dialog" aria-labelledby="dialog-title">
       <div class="dialog-heading">
         <div>
-          <div class="eyebrow">LANCLAIM / ADMINISTRAR</div>
           <h2 id="dialog-title"></h2>
         </div>
         <button

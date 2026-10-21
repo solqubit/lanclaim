@@ -357,6 +357,57 @@ const english = {
   "No encontrado.": "Not found.",
   "Se requiere application/json.": "application/json is required.",
 };
+Object.assign(english, {
+  "Direcciones IP": "IP addresses",
+  Red: "Network",
+  "Mis IPs": "My IPs",
+  Reclamadas: "Claimed",
+  "Escanea, revisa y reclama tus direcciones.":
+    "Scan, review and claim your addresses.",
+  "Tus direcciones, asignaciones y planes.":
+    "Your addresses, assignments and plans.",
+  "Equipos, direcciones y ciclo de vida.": "Machines, addresses and lifecycle.",
+  "Registro de cambios y asignaciones.": "Changes and assignment history.",
+  "Una IP sin respuesta no significa que esté disponible.":
+    "An IP with no response is not necessarily available.",
+  "Red del servidor": "Server network",
+  "Elegir red / rango manual": "Choose network / custom range",
+  "Escanear red": "Scan network",
+  "Ver rango": "View range",
+  Conectividad: "Connectivity",
+  "Buscar IP…": "Search IP…",
+  "Sin comprobar": "Not checked",
+  "Sin respuesta": "No response",
+  "Sin escaneo en curso": "No scan in progress",
+  "Escaneando…": "Scanning…",
+  "Deteniendo…": "Stopping…",
+  "Escaneo terminado": "Scan completed",
+  "Escaneo detenido": "Scan stopped",
+  "Error de escaneo": "Scan error",
+  activas: "responding",
+  Detener: "Stop",
+  Administrar: "Manage",
+  "Elige tu red para empezar": "Choose your network to start",
+  "Escanea para ver qué IPs responden, o abre el rango para reclamarlas.":
+    "Scan to see which IPs respond, or view the range to claim them.",
+  "Acerca del escaneo": "About scanning",
+  "Comprueba respuestas ICMP desde el servidor. Un firewall puede impedirlas. Hasta 1024 IPv4 por escaneo; no modifica tus asignaciones. Los resultados muestran la fecha de la última comprobación.":
+    "Checks ICMP responses from the server. Firewalls may block replies. Up to 1024 IPv4 addresses per scan; assignments stay unchanged. Results show the last check time.",
+  "En VM o WSL2, elige la red que el servidor puede alcanzar. Ver rango admite hasta 4096 direcciones e incluye los extremos de una subred; el escaneo CIDR omite red y broadcast.":
+    "In a VM or WSL2, choose a network reachable from the server. View range supports up to 4096 addresses including subnet endpoints; CIDR scans skip network and broadcast addresses.",
+  "El escaneo admite solamente IPv4.": "Scanning supports IPv4 only.",
+  "Escanea hasta 1024 direcciones por operación.":
+    "Scan up to 1024 addresses per operation.",
+  "Selecciona direcciones IPv4 de equipos, sin multicast ni broadcast.":
+    "Select IPv4 host addresses, without multicast or broadcast.",
+  "No se encontró ping. Instala iputils-ping o iputils en el servidor.":
+    "Ping was not found. Install iputils-ping or iputils on the server.",
+  "No se pudo ejecutar ping. Revisa los permisos y la red del servidor.":
+    "Could not run ping. Check server permissions and networking.",
+  "Ya hay un escaneo en curso.": "A scan is already running.",
+  "No se pudo guardar el resultado del escaneo.":
+    "Could not save the scan result.",
+});
 const translationPattern = new RegExp(
   Object.keys(english)
     .sort((a, b) => b.length - a.length)

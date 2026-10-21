@@ -3,6 +3,7 @@ set -Eeuo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"
 root_linux
 require_systemd
+install_python
 require_python
 [[ -L "$APP_ROOT/current" && -f "$CONFIG_ROOT/lanclaim.env" && -f "$UNIT" ]] || die 'Primero instala LanClaim con install.sh.'
 PREVIOUS="$(readlink -f "$APP_ROOT/current")"

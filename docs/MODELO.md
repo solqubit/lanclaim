@@ -1,6 +1,6 @@
 # Modelo de dominio propuesto
 
-Modelo implementado con Python y SQLite. `lanclaim/db.py` contiene el esquema inicial (versión 1), las transacciones y restricciones de integridad. Las observaciones automáticas quedan para una fase posterior.
+Modelo implementado con Python y SQLite. `lanclaim/db.py` contiene el esquema y la migración a versión 2, las transacciones y restricciones de integridad. La tabla `observations` conserva el último resultado ICMP por dirección sin modificar reclamaciones ni asignaciones.
 
 ## Separar pertenencia, asignación y observación
 
@@ -21,7 +21,7 @@ Una revisión puede coexistir con una asignación activa. En ese caso la interfa
 | Planificación | ID, IP, destino previsto, notas, fecha de creación, estado abierto/ejecutado/cancelado y fecha de cierre. |
 | Revisión | ID, IP, motivo, evidencia, fecha de apertura, fecha de resolución y decisión tomada. Puede referenciar la asignación afectada. |
 | Evento de historial | ID, tipo de operación, fecha, referencias estables a IP/máquina/asignación/plan/revisión y cambios relevantes. |
-| Observación de red (posterior) | IP observada, IP reclamada relacionada si existe, fecha, método, resultado de conectividad y atributos detectados. |
+| Última observación de red | Dirección normalizada, resultado ICMP (`responding` o `no_response`) y fecha UTC. Puede existir sin reclamación. Los atributos de identidad y el historial de sondeos quedan para una fase posterior. |
 
 El alcance inicial es un espacio personal. Si se incorporan redes aisladas con direcciones repetidas, se añadirá un ámbito explícito de red a la identidad y a las restricciones de unicidad antes de permitir esos duplicados.
 
@@ -77,7 +77,7 @@ Corregir una asignación durante una revisión requiere una acción administrati
 
 Los cuatro estados visibles forman una partición: disponibles + planificadas + asignadas sin revisión + pendientes de revisión = total de IP reclamadas.
 
-La métrica **Con asignación activa** incluirá también las asignadas que estén pendientes de revisión, porque siguen vinculadas a una máquina. Se indicará cuántas de ellas requieren revisión. Del mismo modo, la consulta de planes incluirá los planes abiertos con revisión.
+La métrica **Asignadas** incluirá también las asignadas que estén pendientes de revisión, porque siguen vinculadas a una máquina. Se indicará cuántas de ellas requieren revisión. Del mismo modo, la consulta de planes incluirá los planes abiertos con revisión.
 
 La interfaz no presentará estos totales solapados como categorías sumables. Las consultas de disponibilidad usarán exclusivamente la regla de asignable, y las de reutilización su subconjunto histórico.
 
@@ -85,4 +85,4 @@ La interfaz no presentará estos totales solapados como categorías sumables. La
 
 Una máquina en reinstalación conserva sus vínculos, pero no recibe asignaciones nuevas hasta finalizar el mantenimiento. Puede retirarse explícitamente si el mantenimiento termina en una retirada definitiva. Los datos de identidad se editan desde su ficha sin crear una máquina nueva.
 
-Mi red enumera un rango o CIDR y relaciona sus direcciones con el inventario existente. Las sugerencias proceden de las interfaces locales del servidor; no se hacen sondeos de red. Solo la confirmación de las direcciones seleccionadas crea reclamaciones. La última red consultada y el idioma se recuerdan en el navegador; el inventario y su historial permanecen en SQLite.
+Mi red enumera un rango o CIDR y relaciona sus direcciones con el inventario existente. Las sugerencias proceden de las interfaces locales del servidor; no se hacen sondeos al abrir la página ni al elegir un rango. El botón Escanear red inicia explícitamente comprobaciones ICMP acotadas, con progreso y cancelación. Solo la confirmación de las direcciones seleccionadas crea reclamaciones. La última red consultada y el idioma se recuerdan en el navegador; el inventario y su historial permanecen en SQLite.

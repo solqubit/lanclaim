@@ -46,7 +46,7 @@ const fieldLabels = {
   notes: t("Notas"),
 };
 let state,
-  view = "ips",
+  view = "network",
   filter = "all",
   query = "",
   historyRows = [],
@@ -62,6 +62,10 @@ let networks = [],
   networkQuery = "",
   networkPage = 0,
   networkBusy = false;
+let scan = { status: "idle" },
+  observations = new Map(),
+  scanTimer;
+const scanRunning = () => ["running", "cancelling"].includes(scan.status);
 const machine = (id) => state.machines.find((m) => m.id === id);
 const ipById = (id) => state.ips.find((ip) => ip.id === id);
 const badge = (status) =>
@@ -130,22 +134,16 @@ async function refresh() {
   }
 }
 function renderStats() {
-  const stats = [
-    ["claimed", t("IPs reclamadas"), t("Tu espacio personal"), "▦"],
-    ["available", t("Disponibles"), t("Listas para asignar"), "↗"],
-    [
-      "assigned",
-      t("Con asignación activa"),
-      t("Incluye las que requieren revisión"),
-      "▣",
-    ],
-    ["planned", t("Planificadas"), t("Para lo que viene"), "◷"],
-    ["review", t("Por revisar"), t("Discrepancias abiertas"), "◇"],
-  ];
-  $("#stats").innerHTML = stats
+  $("#stats").innerHTML = [
+    ["claimed", t("Reclamadas")],
+    ["available", t("Disponibles")],
+    ["assigned", t("Asignadas")],
+    ["planned", t("Planificadas")],
+    ["review", t("Por revisar")],
+  ]
     .map(
-      ([key, label, hint, mark], i) =>
-        `<button class="stat ${i === 0 ? "featured" : ""}" data-stat="${key}"><span class="stat-label">${label}</span><span class="stat-mark" aria-hidden="true">${mark}</span><span class="stat-value">${state.counts[key]}</span><span class="stat-hint">${hint}</span></button>`,
+      ([key, label]) =>
+        `<button class="stat" data-stat="${key}"><strong>${state.counts[key]}</strong> ${label}</button>`,
     )
     .join("");
 }
@@ -162,32 +160,31 @@ function navigate(next, nextFilter = "all") {
   const titles = {
     ips: [
       t("Mi espacio de IPs"),
-      t("Administra lo que es tuyo. Ten claro qué puedes usar después."),
+      t("Tus direcciones, asignaciones y planes."),
       t("ESPACIO DE IPS"),
     ],
     network: [
       t("Mi red"),
-      t(
-        "Mira las direcciones de tu red y elige cuáles incorporar a tu espacio.",
-      ),
+      t("Escanea, revisa y reclama tus direcciones."),
       t("MI RED"),
     ],
     machines: [
       t("Mis máquinas"),
-      t("Cada equipo, sus direcciones y toda su historia."),
+      t("Equipos, direcciones y ciclo de vida."),
       t("MÁQUINAS"),
     ],
     history: [
       t("Historial"),
-      t("Cada cambio deja una huella. Nada de tu inventario se pierde."),
+      t("Registro de cambios y asignaciones."),
       t("HISTORIAL"),
     ],
   };
-  const [title, subtitle, crumb] = titles[view];
+  const [title, subtitle] = titles[view];
   $("#page-title").textContent = title;
   $("#page-subtitle").textContent = subtitle;
-  $("#breadcrumb").textContent = crumb;
-  $("#stats").hidden = view === "network" || view === "history";
+  $("#new-machine").hidden = view !== "machines";
+  $("#claim").hidden = view === "history" || view === "machines";
+  $("#stats").hidden = view !== "ips";
   document.title = title + " · LanClaim";
   document.querySelectorAll("[data-nav]").forEach((el) => {
     el.classList.toggle("active", el.dataset.nav === view);
@@ -248,8 +245,77 @@ function networkVisible() {
     (a) =>
       a.includes(query.trim()) &&
       (filter === "all" ||
-        (filter === "mine" ? claimed.has(a) : !claimed.has(a))),
+        (filter === "responding"
+          ? observations.get(a)?.status === "responding"
+          : filter === "mine"
+            ? claimed.has(a)
+            : !claimed.has(a))),
   );
+}
+function observationCell(address) {
+  const result = observations.get(address);
+  if (!result) return html`<span class="muted">Sin comprobar</span>`;
+  return `<span class="connection ${result.status}">${result.status === "responding" ? t("Activa") : t("Sin respuesta")}</span><small class="checked-at">${esc(date(result.checked_at))}</small>`;
+}
+function scanSummary() {
+  const names = {
+    idle: t("Sin escaneo en curso"),
+    running: t("Escaneando…"),
+    cancelling: t("Deteniendo…"),
+    completed: t("Escaneo terminado"),
+    cancelled: t("Escaneo detenido"),
+    failed: t("Error de escaneo"),
+  };
+  return `${names[scan.status]}${scan.range ? ` · ${scan.range}` : ""}${scan.total ? ` · ${scan.completed}/${scan.total} · ${scan.responding} ${t("activas")}` : ""}${scan.error ? ` · ${t(scan.error)}` : ""}`;
+}
+async function pollScan() {
+  clearTimeout(scanTimer);
+  try {
+    const result = await api("scans");
+    scan = result.scan;
+    observations = new Map(
+      result.observations.map((item) => [item.address, item]),
+    );
+    if (view === "network") {
+      // Keep typing and selections stable while checks arrive.
+      if (
+        !document.activeElement?.matches("input,select") &&
+        !$("#dialog").open
+      ) {
+        const focused = document.activeElement;
+        const focusSelector =
+          focused?.closest("#content") && focused.tagName === "BUTTON"
+            ? focused.id
+              ? `#${focused.id}`
+              : focused.dataset.filter
+                ? `[data-filter="${focused.dataset.filter}"]`
+                : null
+            : null;
+        renderNetwork();
+        if (focusSelector)
+          ($(focusSelector) || $("#scan-start"))?.focus({
+            preventScroll: true,
+          });
+      } else {
+        const summary = $("#scan-summary");
+        if (summary) summary.textContent = scanSummary();
+        document.querySelectorAll("[data-observation]").forEach((cell) => {
+          cell.innerHTML = observationCell(cell.dataset.observation);
+        });
+        const start = $("#scan-start"),
+          stop = $("#scan-stop");
+        if (start) start.disabled = networkBusy || scanRunning();
+        if (stop) {
+          stop.hidden = !scanRunning();
+          stop.disabled = scan.status === "cancelling";
+        }
+      }
+    }
+    if (scanRunning()) scanTimer = setTimeout(pollScan, 1000);
+  } catch (error) {
+    showGlobalError(error);
+    if (scanRunning()) scanTimer = setTimeout(pollScan, 3000);
+  }
 }
 function renderNetwork() {
   const claimed = new Map(state.ips.map((ip) => [ip.address, ip]));
@@ -261,63 +327,78 @@ function renderNetwork() {
   networkPage = Math.min(networkPage, pages - 1);
   const page = visible.slice(networkPage * 64, (networkPage + 1) * 64);
   const selectable = page.filter((a) => !claimed.has(a));
-  $("#content").innerHTML = html`<section class="network-config panel">
-      <div class="panel-title">
-        <div>
-          <h2>Elige una red o un rango</h2>
-          <p>
-            Lista de direcciones del rango. La presencia de una IP aquí no
-            indica que esté ocupada.
-          </p>
-        </div>
-      </div>
-      <form id="network-form">
-        <label
-          >Red o rango<input
-            id="network-range"
-            name="network"
-            value="${esc(networkQuery)}"
-            placeholder="192.168.1.0/24 o 192.168.1.10-192.168.1.50"
-            required
-            maxlength="200" /></label
-        ><button class="primary" type="submit" ${networkBusy ? "disabled" : ""}>
-          ${networkBusy ? t("Cargando…") : t("Mostrar direcciones")}
-        </button>
-      </form>
-      ${networks.length ? html`<div class="network-suggestions"><span>Redes del servidor:</span>${networks.map((n) => `<button class="secondary" data-network="${esc(n.cidr)}" ${n.size > 4096 ? t('disabled title="Divide esta red en rangos de hasta 4096 IPs"') : ""}>${esc(n.cidr)} <small>${esc(n.interface)}</small></button>`).join("")}</div>` : t('<p class="help network-help">Introduce tu subred manualmente. En VM o WSL2 puede ser distinta de la red del equipo desde el que accedes.</p>')}
-      <p class="help network-help">
-        Hasta 4096 direcciones por consulta. En CIDR se incluyen también los
-        extremos de la red; verifica su uso antes de asignarlos.
-      </p>
-    </section>
-    <section class="panel">
-      <div class="panel-title">
-        <div>
-          <h2>
-            Direcciones de la red
-            <span class="count-pill">${networkAddresses.length}</span>
-          </h2>
-          <p>
-            Selecciona las que quieras administrar. Las ya reclamadas conservan
-            su estado.
-          </p>
-        </div>
+  $("#content").innerHTML = html` <form id="network-form" class="scan-controls">
+      <label class="network-picker"
+        >Red del servidor
+        <select id="network-choice" aria-label="Red del servidor">
+          <option value="">Elegir red / rango manual</option>
+          ${networks.map((n) => `<option value="${esc(n.cidr)}" ${n.cidr === networkQuery ? "selected" : ""}>${esc(n.cidr)} · ${esc(n.interface)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="range-picker"
+        >Red o rango
+        <input
+          id="network-range"
+          value="${esc(networkQuery)}"
+          placeholder="192.168.1.0/24"
+          required
+          maxlength="200"
+        />
+      </label>
+      <button
+        class="primary"
+        id="scan-start"
+        type="submit"
+        ${networkBusy || scanRunning() ? "disabled" : ""}
+      >
+        Escanear red
+      </button>
+      <button
+        class="secondary"
+        type="button"
+        data-action="list-network"
+        ${networkBusy ? "disabled" : ""}
+      >
+        Ver rango
+      </button>
+    </form>
+    <div class="scan-feedback">
+      <span id="scan-summary" role="status">${esc(scanSummary())}</span>
+      <button
+        id="scan-stop"
+        class="quiet"
+        data-action="stop-scan"
+        ${scanRunning() ? "" : "hidden"}
+        ${scan.status === "cancelling" ? "disabled" : ""}
+      >
+        Detener
+      </button>
+    </div>
+    <section class="panel network-table">
+      <div class="network-toolbar">
+        ${tabs([
+          ["all", t("Todas")],
+          ["responding", t("Activas")],
+          ["mine", t("Mis IPs")],
+          ["outside", t("Sin reclamar")],
+        ])}
+        <input
+          class="search"
+          id="search"
+          type="search"
+          value="${esc(query)}"
+          placeholder="Buscar IP…"
+          aria-label="Buscar IP…"
+        />
         <button
-          class="primary"
+          class="secondary"
           data-action="claim-selected"
           ${networkSelected.size ? "" : "disabled"}
         >
-          Reclamar seleccionadas (${networkSelected.size})
+          Reclamar (${networkSelected.size})
         </button>
       </div>
-      ${toolbar(
-        [
-          ["all", t("Todas")],
-          ["outside", t("Sin reclamar")],
-          ["mine", t("En mi espacio")],
-        ],
-        t("Buscar dirección…"),
-      )}${
+      ${
         page.length
           ? html`<div class="table-wrap">
                 <table>
@@ -329,10 +410,11 @@ function renderNetwork() {
                           id="select-network-page"
                           aria-label="Seleccionar IPs sin reclamar de esta página"
                           ${selectable.length && selectable.every((a) => networkSelected.has(a)) ? "checked" : ""}
-                          ${!selectable.length ? "disabled" : ""}
+                          ${selectable.length ? "" : "disabled"}
                         />
                       </th>
                       <th>Dirección IP</th>
+                      <th>Conectividad</th>
                       <th>Mi inventario</th>
                       <th>Máquina / destino</th>
                       <th>Acciones</th>
@@ -356,14 +438,17 @@ function renderNetwork() {
                           <td>
                             <span class="ip-address">${esc(address)}</span>
                           </td>
-                          <td>
-                            ${ip ? badge(ip.status) : t('<span class="badge outside">Sin reclamar</span>')}
+                          <td data-observation="${esc(address)}">
+                            ${observationCell(address)}
                           </td>
                           <td>
-                            ${ip?.assignment ? machineLink(ip.assignment.machine_id) : ip?.plan ? esc(ip.plan.target) : '<span class="muted">—</span>'}
+                            ${ip ? badge(ip.status) : html`<span class="muted">Sin reclamar</span>`}
                           </td>
                           <td>
-                            ${ip ? html`<button class="row-action" data-action="ip-detail" data-id="${ip.id}">Administrar ↗</button>` : t('<span class="subtext">Selecciona para incorporar</span>')}
+                            ${ip?.assignment ? machineLink(ip.assignment.machine_id) : ip?.plan ? esc(ip.plan.target) : "—"}
+                          </td>
+                          <td>
+                            ${ip ? html`<button class="row-action" data-action="ip-detail" data-id="${ip.id}">Administrar</button>` : html`<button class="row-action" data-claim-address="${esc(address)}">Reclamar</button>`}
                           </td>
                         </tr>`;
                       })
@@ -382,8 +467,9 @@ function renderNetwork() {
                     data-action="network-prev"
                     ${networkPage === 0 ? "disabled" : ""}
                   >
-                    ← Anterior</button
-                  ><span>Página ${networkPage + 1} de ${pages}</span
+                    ← Anterior
+                  </button>
+                  <span>${networkPage + 1} / ${pages}</span
                   ><button
                     class="quiet"
                     data-action="network-next"
@@ -396,19 +482,42 @@ function renderNetwork() {
           : empty(
               networkAddresses.length
                 ? t("Sin direcciones con este filtro")
-                : t("Tu red, dirección por dirección"),
+                : t("Elige tu red para empezar"),
               networkAddresses.length
                 ? t("Cambia el filtro para ver otras direcciones.")
                 : t(
-                    "Introduce una subred o elige una de las redes detectadas en el servidor para empezar.",
+                    "Escanea para ver qué IPs responden, o abre el rango para reclamarlas.",
                   ),
             )
       }
-    </section>`;
-  $("#network-form").addEventListener("submit", (event) => {
+    </section>
+    <details class="scan-help">
+      <summary>Acerca del escaneo</summary>
+      <p>
+        Comprueba respuestas ICMP desde el servidor. Un firewall puede
+        impedirlas. Hasta 1024 IPv4 por escaneo; no modifica tus asignaciones.
+        Los resultados muestran la fecha de la última comprobación.
+      </p>
+      <p>
+        En VM o WSL2, elige la red que el servidor puede alcanzar. Ver rango
+        admite hasta 4096 direcciones e incluye los extremos de una subred; el
+        escaneo CIDR omite red y broadcast.
+      </p>
+    </details>`;
+  $("#network-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (networkBusy || scanRunning()) return;
     networkQuery = $("#network-range").value.trim();
-    listNetwork().catch(showGlobalError);
+    try {
+      // Validate the scan before changing the visible range.
+      const result = await api("scans/start", { addresses: networkQuery });
+      scan = result.scan;
+      await listNetwork();
+      await pollScan();
+    } catch (error) {
+      toast(error.message);
+      await pollScan();
+    }
   });
 }
 async function listNetwork() {
@@ -497,86 +606,66 @@ function ipRows(ips) {
 function renderIps() {
   const ips = matchingIps();
   $("#content").innerHTML = html`<section class="panel">
-      <div class="panel-title">
-        <div>
-          <h2>
-            Direcciones de mi espacio
-            <span class="count-pill">${state.ips.length}</span>
-          </h2>
-          <p>
-            Reclamar una IP la incorpora a tu inventario; no la ocupa en la red.
-          </p>
-        </div>
+    <div class="panel-title">
+      <div>
+        <h2>
+          Direcciones de mi espacio
+          <span class="count-pill">${state.ips.length}</span>
+        </h2>
+        <p>
+          Reclamar una IP la incorpora a tu inventario; no la ocupa en la red.
+        </p>
       </div>
-      ${toolbar(
-        [
-          ["all", t("Todas")],
-          ["available", t("Disponibles")],
-          ["assigned", t("Asignadas")],
-          ["planned", t("Planificadas")],
-          ["review", t("Por revisar")],
-          ["reusable", t("Reutilizables")],
-        ],
-        t("Buscar IP, máquina o etiqueta…"),
-      )}${
-        ips.length
-          ? html`<div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Dirección IP</th>
-                      <th>Estado</th>
-                      <th>Máquina / destino</th>
-                      <th>Etiquetas</th>
-                      <th>Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${ipRows(ips)}
-                  </tbody>
-                </table>
-              </div>
-              <div class="panel-bottom">
-                <span>${ips.length} direcciones en esta vista</span
-                ><span>Asignaciones e historial persistentes</span>
-              </div>`
-          : empty(
-              state.ips.length
-                ? t("Sin resultados en esta vista")
-                : t("Tu próximo proyecto empieza con una IP"),
-              state.ips.length
-                ? t("Prueba otro filtro o cambia la búsqueda.")
-                : t(
-                    "Añade una dirección o un rango. Puedes mantenerlo disponible, planificarlo o asignarlo cuando quieras.",
-                  ),
-              state.ips.length
-                ? ""
-                : t(
-                    '<button class="primary" data-action="claim">＋ Reclamar mis primeras IPs</button>',
-                  ),
-            )
-      }
-    </section>
-    <div class="insight-grid">
-      <article class="insight">
-        <span class="insight-icon" aria-hidden="true">↻</span>
-        <div>
-          <h3>${state.counts.reusable} IPs listas para una nueva etapa</h3>
-          <p>Direcciones liberadas que conservan toda su historia.</p>
-        </div>
-        <button class="row-action" data-action="reusable">Ver IPs →</button>
-      </article>
-      <article class="insight">
-        <span class="insight-icon" aria-hidden="true">▣</span>
-        <div>
-          <h3>¿Vas a formatear una máquina?</h3>
-          <p>Márcala en reinstalación y conserva sus IPs.</p>
-        </div>
-        <button class="row-action" data-action="machines">
-          Ver máquinas →
-        </button>
-      </article>
-    </div>`;
+    </div>
+    ${toolbar(
+      [
+        ["all", t("Todas")],
+        ["available", t("Disponibles")],
+        ["assigned", t("Asignadas")],
+        ["planned", t("Planificadas")],
+        ["review", t("Por revisar")],
+        ["reusable", t("Reutilizables")],
+      ],
+      t("Buscar IP, máquina o etiqueta…"),
+    )}${
+      ips.length
+        ? html`<div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Dirección IP</th>
+                    <th>Estado</th>
+                    <th>Máquina / destino</th>
+                    <th>Etiquetas</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${ipRows(ips)}
+                </tbody>
+              </table>
+            </div>
+            <div class="panel-bottom">
+              <span>${ips.length} direcciones en esta vista</span
+              ><span>Asignaciones e historial persistentes</span>
+            </div>`
+        : empty(
+            state.ips.length
+              ? t("Sin resultados en esta vista")
+              : t("Tu próximo proyecto empieza con una IP"),
+            state.ips.length
+              ? t("Prueba otro filtro o cambia la búsqueda.")
+              : t(
+                  "Añade una dirección o un rango. Puedes mantenerlo disponible, planificarlo o asignarlo cuando quieras.",
+                ),
+            state.ips.length
+              ? ""
+              : t(
+                  '<button class="primary" data-action="claim">＋ Reclamar mis primeras IPs</button>',
+                ),
+          )
+    }
+  </section> `;
 }
 function renderMachines() {
   const list = state.machines.filter(
@@ -607,36 +696,49 @@ function renderMachines() {
       t("Buscar nombre, hostname, etiqueta…"),
     )}${
       list.length
-        ? `<div class="machine-grid">${list
-            .map((m) => {
-              const ips = state.ips.filter(
-                (ip) => ip.assignment?.machine_id === m.id,
-              );
-              return html`<article class="machine-card">
-                <div class="machine-top">
-                  <span class="machine-icon" aria-hidden="true">▣</span
-                  >${badge(m.lifecycle)}
-                </div>
-                <h3>${machineLink(m.id)}</h3>
-                <p>${esc(m.os || t("Sistema operativo sin especificar"))}</p>
-                <p>
-                  ${esc(m.platform || t("Plataforma sin especificar"))}${m.vm_id ? " · " + esc(m.vm_id) : ""}
-                </p>
-                <div class="machine-ips">
-                  ${ips.length ? ips.map((ip) => ipLink(ip.id)).join(" ") : t('<span class="muted subtext">Sin IPs asignadas</span>')}
-                </div>
-                <div class="actions">
-                  <button
-                    class="secondary"
-                    data-action="machine-detail"
-                    data-id="${m.id}"
-                  >
-                    Administrar →
-                  </button>
-                </div>
-              </article>`;
-            })
-            .join("")}</div>`
+        ? html`<div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Máquina</th>
+                  <th>Sistema operativo</th>
+                  <th>Direcciones IP</th>
+                  <th>Estado</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${list
+                  .map((m) => {
+                    const ips = state.ips.filter(
+                      (ip) => ip.assignment?.machine_id === m.id,
+                    );
+                    return html`<tr>
+                      <td>
+                        ${machineLink(m.id)}<small class="checked-at"
+                          >${esc(m.hostname)}</small
+                        >
+                      </td>
+                      <td>${esc(m.os || "—")}</td>
+                      <td>
+                        ${ips.length ? ips.map((ip) => ipLink(ip.id)).join(" · ") : "—"}
+                      </td>
+                      <td>${badge(m.lifecycle)}</td>
+                      <td>
+                        <button
+                          class="row-action"
+                          data-action="machine-detail"
+                          data-id="${m.id}"
+                        >
+                          Administrar
+                        </button>
+                      </td>
+                    </tr>`;
+                  })
+                  .join("")}
+              </tbody>
+            </table>
+          </div>`
         : empty(
             state.machines.length
               ? t("Sin máquinas en esta vista")
@@ -1077,6 +1179,14 @@ function reasonForm(
 async function dispatch(action, id) {
   const ip = ipById(id);
   switch (action) {
+    case "list-network":
+      networkQuery = $("#network-range").value.trim();
+      await listNetwork();
+      break;
+    case "stop-scan":
+      await api("scans/cancel", {});
+      await pollScan();
+      break;
     case "network-prev":
       networkPage--;
       renderNetwork();
@@ -1278,7 +1388,10 @@ document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button || submitting) return;
   try {
-    if (button.dataset.network) {
+    if (button.dataset.claimAddress) {
+      networkSelected = new Set([button.dataset.claimAddress]);
+      await dispatch("claim-selected");
+    } else if (button.dataset.network) {
       networkQuery = button.dataset.network;
       await listNetwork();
     } else if (button.dataset.nav) navigate(button.dataset.nav);
@@ -1298,6 +1411,7 @@ document.addEventListener("click", async (event) => {
   }
 });
 document.addEventListener("input", (event) => {
+  if (event.target.id === "network-range") networkQuery = event.target.value;
   if (event.target.id !== "search") return;
   query = event.target.value;
   const start = event.target.selectionStart;
@@ -1310,7 +1424,12 @@ document.addEventListener("input", (event) => {
   }
 });
 document.addEventListener("change", (event) => {
-  if (event.target.dataset.networkAddress) {
+  if (event.target.id === "network-choice") {
+    if (event.target.value) {
+      networkQuery = event.target.value;
+      listNetwork().catch(showGlobalError);
+    } else $("#network-range").focus();
+  } else if (event.target.dataset.networkAddress) {
     if (event.target.checked)
       networkSelected.add(event.target.dataset.networkAddress);
     else networkSelected.delete(event.target.dataset.networkAddress);
@@ -1335,11 +1454,17 @@ $("#dialog").addEventListener("cancel", (event) => {
 });
 $("#refresh").addEventListener("click", () =>
   refresh()
+    .then(pollScan)
     .then(() => toast(t("Inventario actualizado.")))
     .catch(() => {}),
 );
 $(".brand").addEventListener("click", (event) => {
   event.preventDefault();
-  if (state) navigate("ips");
+  if (state) navigate("network");
 });
-refresh().catch(() => {});
+refresh()
+  .then(() => {
+    navigate("network");
+    return pollScan();
+  })
+  .catch(() => {});

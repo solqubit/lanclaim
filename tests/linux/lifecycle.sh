@@ -16,6 +16,18 @@ command('claim', {'addresses': '10.20.30.10-10.20.30.12'})
 machine = command('create_machine', {'name': 'Lifecycle test'})
 command('assign', {'ip_id': 1, 'machine_id': machine['id']})
 command('reinstall', {'id': machine['id'], 'reason': 'Testing preservation'})
+# Probe only loopback, using the real ping binary as the service user.
+import time
+request = urllib.request.Request(base + 'scans/start', json.dumps({'addresses': '127.0.0.1'}).encode(),
+    {'Content-Type': 'application/json', 'X-CSRF-Token': state['csrf']})
+json.load(urllib.request.urlopen(request))
+for _ in range(30):
+    result = json.load(urllib.request.urlopen(base + 'scans'))
+    if result['scan']['status'] not in ('running', 'cancelling'):
+        break
+    time.sleep(0.2)
+assert result['scan']['status'] == 'completed', result
+assert result['observations'][0]['status'] == 'responding', result
 PY
 bash update.sh
 python3 - <<'PY'

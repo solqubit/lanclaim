@@ -77,7 +77,7 @@ Una máquina apagada, sin respuesta o no detectada conservará sus asignaciones.
 
 ## 4. Dashboard y navegación
 
-La pantalla inicial se llamará **Mi espacio de IPs** y funcionará sin escaneos previos. Tendrá acceso directo a reclamar IPs, registrar máquinas, planificar y asignar.
+La interfaz será minimalista: navegación superior con **Red**, **Mis IPs**, **Máquinas** e **Historial**, tablas compactas y detalles bajo demanda. La vista inicial **Red** permite elegir un rango, escanearlo explícitamente y reclamar direcciones. **Mis IPs** conserva el papel de administrador personal y funciona sin escaneos previos, con acceso a reclamar, planificar y asignar. Registrar máquinas está disponible en su pestaña.
 
 | Pregunta | Respuesta en la interfaz |
 | --- | --- |

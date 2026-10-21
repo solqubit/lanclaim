@@ -46,3 +46,9 @@ assert.equal(
 console.log(
   "PASS: ES/EN labels, validation errors, template interpolation and unmodified user content.",
 );
+
+assert.equal(vm.runInContext("t('Escanear red')", en), "Scan network");
+assert.equal(vm.runInContext("t('Red del servidor')", en), "Server network");
+assert.equal(vm.runInContext("t('Sin respuesta')", en), "No response");
+assert.equal(vm.runInContext("t('Direcciones IP')", en), "IP addresses");
+assert.equal(vm.runInContext("t('Ya hay un escaneo en curso.')", en), "A scan is already running.");

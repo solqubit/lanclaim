@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 from . import __version__
 from .db import Invalid, Store
 from .networks import local_networks
+from .scanner import Scanner
 
 STATIC = Path(__file__).parent / 'static'
 
@@ -22,6 +23,7 @@ class Server(ThreadingHTTPServer):
 
     def __init__(self, address, store):
         self.store = store
+        self.scanner = Scanner(store)
         self.csrf = secrets.token_urlsafe(32)
         self.allowed_hosts = {'localhost', socket.gethostname().lower(), socket.getfqdn().lower()}
         self.allowed_hosts.update(h.strip().lower() for h in os.getenv('LANCLAIM_ALLOWED_HOSTS', '').split(',') if h.strip())
@@ -31,6 +33,10 @@ class Server(ThreadingHTTPServer):
         connection, address = super().get_request()
         connection.settimeout(15)
         return connection, address
+
+    def server_close(self):
+        self.scanner.close()
+        super().server_close()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -77,6 +83,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {**self.server.store.snapshot(), 'csrf': self.server.csrf, 'version': __version__})
             if route.path == '/api/networks':
                 return self.send(200, {'networks': local_networks()})
+            if route.path == '/api/scans':
+                return self.send(200, self.server.scanner.snapshot())
             if route.path == '/api/history':
                 query = parse_qs(route.query)
                 args = {key: int(query[key][0]) for key in ('ip_id', 'machine_id', 'before') if key in query}
@@ -107,7 +115,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(413, {'error': 'Petición vacía o demasiado grande.'})
             self.connection.settimeout(15)
             data = json.loads(self.rfile.read(size))
+            if not isinstance(data, dict):
+                raise Invalid('Se esperaba un objeto JSON.')
             path = urlsplit(self.path).path
+            if path == '/api/scans/start':
+                return self.send(200, {'scan': self.server.scanner.start(data.get('addresses'))})
+            if path == '/api/scans/cancel':
+                return self.send(200, {'scan': self.server.scanner.cancel()})
             if not path.startswith('/api/commands/'):
                 return self.send(404, {'error': 'No encontrado.'})
             action = path.removeprefix('/api/commands/')

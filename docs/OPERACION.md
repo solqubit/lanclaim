@@ -90,3 +90,14 @@ Si la recuperación automática no logra arrancar el servicio:
 - **Idioma:** selector Español/English en la barra superior. Se recuerda en el navegador; el inventario permanece en el servidor. Cambiar de idioma recarga la vista.
 
 Solo hay un espacio administrativo en esta versión: no permite registrar la misma dirección en redes aisladas distintas. No hay descubrimiento activo, autenticación multiusuario ni importación de inventarios externos.
+
+
+## Escaneo manual de red
+
+En **Red**, selecciona una interfaz del servidor o introduce una IPv4, un rango o un CIDR y pulsa **Escanear red**. El límite es 1024 direcciones con 16 comprobaciones simultáneas y un solo trabajo activo. **Detener** impide iniciar nuevas comprobaciones; las que ya están en curso pueden terminar. **Ver rango** solo enumera (hasta 4096 direcciones).
+
+El escaneo usa `ping` del sistema. `install.sh` y `update.sh` preparan `iputils-ping` en Debian/Ubuntu o `iputils` en los demás gestores soportados. En una ejecución manual de Linux hay que instalar esa dependencia por separado. Windows usa su ping integrado. Consulta las opciones en la documentación de [Microsoft](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/ping) y [iputils](https://github.com/iputils/iputils/blob/master/doc/ping.xml).
+
+Las comprobaciones salen del servidor, no del navegador. En VM/WSL2 la red virtual detectada puede ser diferente de la LAN física: elige un rango alcanzable por ese servidor. Un firewall puede bloquear ICMP. **Sin respuesta** nunca significa disponible ni libera asignaciones. La columna muestra la fecha del último resultado; no promete estado en tiempo real.
+
+Si ping no existe o no puede ejecutarse, el escaneo muestra un error y conserva la observación anterior. Comprueba `sudo -u lanclaim ping -n -c 1 -W 1 127.0.0.1` y los permisos de ping de tu distribución. No se cambian reglas del firewall ni parámetros globales de red. Las observaciones se guardan en SQLite (esquema 2); el progreso del trabajo está en memoria y un reinicio no reanuda el escaneo.
