@@ -126,6 +126,31 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(self.probed, [])
         self.assertIsNone(self.scanner.status()['finished_at'])
 
+    def test_settings_turn_the_loop_on_and_off_and_persist(self):
+        self.scanner.start()  # interval 0: the loop waits, nothing is pinged
+        time.sleep(0.05)
+        self.assertEqual(self.probed, [])
+        self.assertEqual(self.scanner.status()['interval'], 0)
+        self.scanner.configure(600)  # turning it on scans right away (never scanned before)
+        deadline = time.monotonic() + 5
+        while self.scanner.status()['finished_at'] is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(self.scanner.status()['done'], 6)
+        self.assertEqual(self.scanner.status()['interval'], 600)
+        # Changing the cycle does not trigger an extra scan when the last one is recent.
+        probes = len(self.probed)
+        self.scanner.configure(300)
+        time.sleep(0.1)
+        self.assertEqual(len(self.probed), probes)
+        # The choice survives a restart and overrides the default given at start-up.
+        again = Scanner(self.store, probe=self.fake, interval=0)
+        self.assertEqual(again.status()['interval'], 300)
+        self.scanner.configure(0)
+        self.assertEqual(Scanner(self.store, probe=self.fake, interval=900).status()['interval'], 0)
+        for bad in (30, -5, 86401, 'x', True, None):
+            with self.subTest(bad=bad), self.assertRaises(Invalid):
+                self.scanner.configure(bad)
+
     def test_periodic_loop_runs_first_cycle_immediately(self):
         scanner = Scanner(self.store, probe=self.fake, interval=3600)
         try:

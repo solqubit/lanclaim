@@ -1,14 +1,16 @@
 # LanClaim
 
+**English** · [Español](README.es.md)
+
 **Your personal IP inventory.** See every address of your network on a map, claim the ones you want and keep track of which device uses each of them: physical machines, VMs and containers. Self-hosted, with a dark interface in Spanish and English.
 
 LanClaim is an inventory, not a DHCP server: claiming an IP records it as yours. It does not reserve it on a router.
 
-![Network view: the 192.168.1.0/24 map with assigned, reserved, used-by-others and free addresses, and the side panel of 192.168.1.13 (glpi, a Debian VM on Vates XCP-ng in rack-01)](docs/screenshots/red.png)
+![Network view: the 192.168.1.0/24 map with assigned, reserved, used-by-others and free addresses, and the side panel of 192.168.1.13 (glpi, a Debian VM on Vates XCP-ng in rack-01)](docs/screenshots/network.png)
 
-![Devices view: physical machines with their VMs underneath, a DHCP workstation running VMware Workstation Pro, and the edit panel of ubuntu-dev with its inherited platform](docs/screenshots/equipos.png)
+![Devices view: physical machines with their VMs underneath, a DHCP workstation running VMware Workstation Pro, and the edit panel of ubuntu-dev with its inherited platform](docs/screenshots/devices.png)
 
-*Screenshots with example data, interface in Spanish.*
+*Screenshots with example data.*
 
 ## How it works
 
@@ -43,8 +45,9 @@ Devices are listed under the physical machine they run on. VMs without a machine
 
 ### Automatic ping
 
-The server pings every watched address every 5 minutes (`LANCLAIM_SCAN_INTERVAL`, in seconds; `0` turns it off), and right away when you add a network. You can also press **Scan now**.
+The server pings every watched address on a cycle, and right away when you add a network. You can also press **Scan now**.
 
+- In the Network view, **Automatic ping** turns it off or sets the cycle, from every minute to once a day. The choice is saved on the server and applied at once. `LANCLAIM_SCAN_INTERVAL` (seconds, default 300) is only the starting value until you pick one.
 - On each port, a green dot means the device answers and a red dot means it does not. An amber ring marks a free IP that answered in the last 7 days, probably a device that is switched off.
 - Ping never changes what is yours. A firewall may block ICMP, so a silent IP is not proof that it is free.
 
@@ -58,7 +61,7 @@ Requires Python 3.10+:
 python3 -m lanclaim.server
 ```
 
-Open [http://127.0.0.1:8080](http://127.0.0.1:8080). On Windows use `python`. Data is stored in `./data/lanclaim.sqlite3`. Useful options: `--data-dir`, `--port` and `--scan-interval`.
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080). On Windows use `python`. Data is stored in `./data/lanclaim.sqlite3`. Useful options: `--data-dir`, `--port` and `--scan-interval`. To open the interface in a given language, add `?lang=en` or `?lang=es` to the URL.
 
 ## Install on Linux
 

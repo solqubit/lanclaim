@@ -45,7 +45,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual({k: state[k] for k in ('networks', 'ips', 'devices', 'observations', 'os_choices')},
                          {'networks': [], 'ips': [], 'devices': [], 'observations': {}, 'os_choices': []})
         db = sqlite3.connect(old)
-        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
+        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         db.close()
         self.assertNotIn('machines', tables)

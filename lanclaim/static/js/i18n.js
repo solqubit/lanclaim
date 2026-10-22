@@ -6,6 +6,16 @@ try {
 } catch {
   /* sin almacenamiento: español */
 }
+// ?lang=en o ?lang=es en la URL manda (y se recuerda), útil para compartir un enlace en un idioma.
+try {
+  const asked = new URLSearchParams(globalThis.location?.search || "").get("lang");
+  if (asked === "en" || asked === "es") {
+    current = asked;
+    globalThis.localStorage?.setItem(KEY, asked);
+  }
+} catch {
+  /* ignorado */
+}
 
 export const EN = {
   // Tiempo
@@ -207,6 +217,13 @@ export const EN = {
   "En uso: tiene equipos dentro o IPs, no se puede eliminar": "In use: it has devices inside or IPs, so it cannot be removed",
   "Eliminar etiqueta": "Remove label",
   "Etiquetas": "Labels",
+  "Desactivado": "Off",
+  "Cada {n} min": "Every {n} min",
+  "Cada hora": "Every hour",
+  "Cada {n} h": "Every {n} h",
+  "Ping automático": "Automatic ping",
+  "Ping automático: {cycle}": "Automatic ping: {cycle}",
+  "Ping automático desactivado": "Automatic ping turned off",
   "Nombre del sistema": "System name",
   "Versión": "Version",
   "Elegir sistema…": "Choose a system…",

@@ -107,7 +107,7 @@ Solo hay un espacio de direcciones: la misma IP no puede registrarse en dos rede
 
 ## Ping automático
 
-El servidor hace ping a todas las direcciones vigiladas al arrancar y después cada `LANCLAIM_SCAN_INTERVAL` segundos. Lanza 32 pings simultáneos con 1 s de espera. Al añadir una red, esa red se escanea enseguida.
+El servidor hace ping a todas las direcciones vigiladas según un ciclo. En la vista Red, el selector **Ping automático** lo desactiva o fija el ciclo (de cada minuto a una vez al día); la elección se guarda en el servidor y se aplica al momento. `LANCLAIM_SCAN_INTERVAL` (segundos, 300 por defecto) solo es el valor inicial mientras no elijas otro. Lanza 32 pings simultáneos con 1 s de espera. Al añadir una red, esa red se escanea enseguida.
 
 El ping solo informa: nunca reclama, libera ni reasigna. Un firewall puede bloquear ICMP, así que una IP que no responde no tiene por qué estar libre. Por eso el mapa marca con un anillo ámbar las libres que respondieron en los últimos 7 días.
 

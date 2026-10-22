@@ -132,6 +132,14 @@ class HttpTests(unittest.TestCase):
             time.sleep(0.02)
         self.assertTrue(state['observations']['172.22.0.1']['up'])
 
+    def test_scan_settings_route(self):
+        code, state = self.post('/api/scan/settings', {'interval': 900})
+        self.assertEqual((code, state['scan']['interval']), (200, 900))
+        code, body = self.post('/api/scan/settings', {'interval': 10})
+        self.assertEqual(code, 400)
+        code, state = self.post('/api/scan/settings', {'interval': 0})
+        self.assertEqual(state['scan']['interval'], 0)
+
     def test_scan_now(self):
         self.post('/api/networks/add', {'cidr': '172.21.0.0/30'})
         code, state = self.post('/api/scan/now', {})

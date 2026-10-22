@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 MAX_ADDRESSES = 4096
 MIN_PREFIX, MAX_PREFIX = 22, 30
 DEVICE_TYPES = ('vm', 'fisica', 'contenedor', 'otro')
@@ -69,6 +69,10 @@ INSERT OR IGNORE INTO platform_choices(name, name_key, used_at)
 ALTER TABLE devices ADD COLUMN dhcp INTEGER NOT NULL DEFAULT 0;
 UPDATE devices SET platform = ''
  WHERE host_id IS NOT NULL AND (SELECT h.platform FROM devices h WHERE h.id = devices.host_id) <> '';
+""",
+    # v10: ajustes guardados desde la interfaz (p. ej. el ciclo del ping automático).
+    10: """
+CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """,
 }
 
@@ -270,6 +274,16 @@ class Store:
                         for r in rows if r['address'] in watched}
         return {'networks': networks, 'ips': ips, 'devices': devices, 'observations': observations,
                 'os_choices': os_choices, 'platform_choices': platform_choices}
+
+    def get_setting(self, key, default=None):
+        with self.connect() as db:
+            row = db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
+        return row['value'] if row else default
+
+    def set_setting(self, key, value):
+        with self.transaction() as db:
+            db.execute('INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                       (key, str(value)))
 
     def watched_addresses(self):
         with self.connect() as db:

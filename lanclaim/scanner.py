@@ -9,6 +9,8 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
+from datetime import datetime, timezone
+
 from .db import Invalid, now
 
 log = logging.getLogger(__name__)
@@ -63,12 +65,19 @@ def ping(address):
     return 'responding' if responds else 'no_response'
 
 
+MIN_INTERVAL, MAX_INTERVAL = 60, 86400  # entre 1 minuto y 1 día; 0 = desactivado
+
+
 class Scanner:
     def __init__(self, store, probe=ping, interval=300, workers=32):
         self.store, self.probe = store, probe
-        self.interval, self.workers = interval, workers
+        # El ciclo elegido en la interfaz se guarda y manda sobre el valor de arranque (variable de entorno).
+        saved = store.get_setting('scan_interval')
+        self.interval = int(saved) if saved is not None and saved.isdigit() else interval
+        self.workers = workers
         self.lock = threading.Lock()
         self.stopping = threading.Event()
+        self.wake = threading.Event()  # despierta el bucle cuando cambia el ciclo
         self.loop = None
         self.worker = None
         self.job = {'running': False, 'total': 0, 'done': 0, 'finished_at': None, 'error': ''}
@@ -76,12 +85,24 @@ class Scanner:
 
     def status(self):
         with self.lock:
-            return dict(self.job)
+            return {**self.job, 'interval': self.interval}
 
     def start(self):
-        if self.interval > 0 and self.loop is None:
+        # El bucle siempre existe; con el ciclo a 0 simplemente espera a que lo activen.
+        if self.loop is None:
             self.loop = threading.Thread(target=self._loop, name='lanclaim-scan-loop', daemon=True)
             self.loop.start()
+
+    def configure(self, interval):
+        """Cambia el ciclo del ping automático (segundos; 0 lo desactiva), lo guarda y lo aplica al momento."""
+        if isinstance(interval, bool) or not isinstance(interval, int) or not (
+                interval == 0 or MIN_INTERVAL <= interval <= MAX_INTERVAL):
+            raise Invalid('El ciclo del ping debe estar entre 1 minuto y 1 día, o desactivado.')
+        self.store.set_setting('scan_interval', interval)
+        with self.lock:
+            self.interval = interval
+        self.wake.set()
+        return self.status()
 
     def scan_now(self):
         with self.lock:
@@ -95,6 +116,7 @@ class Scanner:
 
     def close(self):
         self.stopping.set()
+        self.wake.set()
         for thread in (self.loop, self.worker):
             if thread is not None:
                 thread.join(timeout=6)
@@ -102,15 +124,27 @@ class Scanner:
     def _begin(self):
         self.job.update(running=True, total=0, done=0)
 
+    def _seconds_since_last(self):
+        finished = self.job['finished_at']
+        if not finished:
+            return None
+        return (datetime.now(timezone.utc) - datetime.fromisoformat(finished)).total_seconds()
+
     def _loop(self):
         while not self.stopping.is_set():
             with self.lock:
-                idle = not self.job['running']
-                if idle:
+                interval = self.interval
+                elapsed = self._seconds_since_last()
+                due = interval > 0 and not self.job['running'] and (elapsed is None or elapsed >= interval)
+                if due:
                     self._begin()
-            if idle:
+            if due:
                 self._cycle()
-            self.stopping.wait(self.interval)
+                elapsed = 0
+            # Espera hasta el próximo ciclo (o indefinidamente si está desactivado); configure() lo despierta antes.
+            timeout = None if interval <= 0 else max(1.0, interval - (elapsed or 0))
+            self.wake.wait(timeout)
+            self.wake.clear()
 
     def _cycle(self):
         # Una petición recibida durante el ciclo (p. ej. una red recién añadida) provoca otra pasada enseguida.

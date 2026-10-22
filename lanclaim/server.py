@@ -47,6 +47,7 @@ class Server(ThreadingHTTPServer):
             'platforms/rename': lambda d: store.rename_platform(d.get('name'), d.get('new')),
             'os/rename': lambda d: store.rename_os(d.get('name'), d.get('new')),
             'scan/now': lambda d: scanner.scan_now(),
+            'scan/settings': lambda d: scanner.configure(d.get('interval')),
         }
 
     def state(self):

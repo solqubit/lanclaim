@@ -411,6 +411,34 @@ function outsideSummary(state) {
   );
 }
 
+// Ciclo del ping automático: desactivado o cada cuánto. Se guarda en el servidor y se aplica al momento.
+const SCAN_CYCLES = [0, 60, 120, 300, 600, 900, 1800, 3600, 10800, 21600, 43200, 86400];
+
+function cycleLabel(seconds) {
+  if (!seconds) return t("Desactivado");
+  if (seconds < 3600) return t("Cada {n} min", { n: seconds / 60 });
+  return seconds === 3600 ? t("Cada hora") : t("Cada {n} h", { n: Math.round(seconds / 3600) });
+}
+
+function scanCycle(state) {
+  const current = state.scan.interval ?? 0;
+  const values = SCAN_CYCLES.includes(current) ? SCAN_CYCLES : [...SCAN_CYCLES, current].sort((a, b) => a - b);
+  const select = el(
+    "select",
+    {
+      class: "cycle",
+      title: t("Ping automático"),
+      "aria-label": t("Ping automático"),
+      onchange: () => {
+        const interval = Number(select.value);
+        act("scan/settings", { interval }, interval ? t("Ping automático: {cycle}", { cycle: cycleLabel(interval).toLowerCase() }) : t("Ping automático desactivado"));
+      },
+    },
+    values.map((v) => el("option", { value: String(v), selected: v === current }, cycleLabel(v))),
+  );
+  return el("label", { class: "cycle-box" + (current ? "" : " off") }, el("span", { class: "muted" }, t("Ping automático")), select);
+}
+
 function scanInfo(state) {
   const scan = state.scan;
   const box = el("div", { class: "scaninfo" });
@@ -439,6 +467,7 @@ function scanInfo(state) {
       ),
     );
   }
+  box.append(scanCycle(state));
   return box;
 }
 
