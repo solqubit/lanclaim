@@ -1,12 +1,11 @@
-// Vista Equipos: lista fija agrupada por anfitrión y formulario en el panel lateral.
+// Vista Equipos: lista fija (máquinas físicas con sus VMs y VMs por plataforma) y formulario en el panel lateral.
 import { t, typeLabel } from "./i18n.js";
-import { act, forgetOs, forgetPlatform, goto, isBusy, markDirty, render, state as liveState, ui } from "./main.js";
-import { ambiguousHost, byIp, device as deviceById, deviceIps, deviceOf, deviceTree, hostCandidates, hostLabels, networkOf, pingInfo, resolveHost } from "./model.js";
-import { choicePicker, confirmButton, el, osPicker, toast } from "./ui.js";
+import { act, forgetOs, goto, isBusy, markDirty, render, state as liveState, ui } from "./main.js";
+import { byIp, device as deviceById, deviceIps, deviceOf, deviceTree, machineForPlatform, machines, networkOf, pingInfo, platformLabels } from "./model.js";
+import { confirmButton, el, osPicker, toast } from "./ui.js";
 
 const TYPES = ["vm", "fisica", "contenedor", "otro"];
-const HAS_HOST = new Set(["vm", "contenedor", "otro"]); // corren dentro de otro equipo
-const IS_HOST = new Set(["fisica", "otro"]); // pueden alojar VMs y tener plataforma
+const VIRTUAL = new Set(["vm", "contenedor", "otro"]); // corren en una plataforma y, opcionalmente, en una máquina física
 
 export function renderDevices(root, state, ui, opts = {}) {
   const old = root.querySelector("section.devices");
@@ -104,7 +103,17 @@ function deviceList(state) {
   }
   const nodes = deviceTree(state, (d) => matchesDevice(state, d));
   if (!nodes.length) return el("div", { class: "dev-list empty" }, el("p", {}, t("Ningún equipo coincide con la búsqueda.")));
-  return el("div", { class: "dev-list", role: "list" }, nodes.map((node) => deviceRow(state, node)));
+  return el("div", { class: "dev-list", role: "list" }, nodes.map((node) => (node.group ? groupRow(node) : deviceRow(state, node))));
+}
+
+// Cabecera de las VMs que tienen plataforma pero no máquina física indicada.
+function groupRow({ group, count }) {
+  return el(
+    "div",
+    { class: "dev-group", role: "listitem" },
+    el("span", { class: "platform" }, group),
+    el("span", { class: "muted small" }, count === 1 ? t("1 equipo sin máquina física indicada") : t("{n} equipos sin máquina física indicada", { n: count })),
+  );
 }
 
 function deviceRow(state, { device: d, depth, guests }) {
@@ -122,7 +131,7 @@ function deviceRow(state, { device: d, depth, guests }) {
     el(
       "div",
       { class: "dev-side" },
-      d.platform && d.platform.toLowerCase() !== d.name.toLowerCase() ? el("span", { class: "platform" }, d.platform) : null,
+      d.type === "fisica" && d.platform ? el("span", { class: "platform" }, d.platform) : null,
       guests ? el("span", { class: "guests" }, guests === 1 ? t("1 equipo dentro") : t("{n} equipos dentro", { n: guests })) : null,
       el(
         "div",
@@ -185,7 +194,7 @@ function devicePanel(state) {
 }
 
 function idle(state) {
-  const hosts = new Set(state.devices.map((d) => d.host_id).filter((id) => id != null));
+  const physical = machines(state).length;
   const assigned = state.ips.filter((ip) => ip.device_id != null).length;
   return el(
     "div",
@@ -196,7 +205,7 @@ function idle(state) {
       "div",
       { class: "stats" },
       el("div", {}, el("b", {}, String(state.devices.length)), el("span", {}, t("equipos"))),
-      el("div", {}, el("b", {}, String(hosts.size)), el("span", {}, t("anfitriones"))),
+      el("div", {}, el("b", {}, String(physical)), el("span", {}, t("máquinas físicas"))),
       el("div", {}, el("b", {}, String(assigned)), el("span", {}, t("IPs asignadas"))),
     ),
   );
@@ -220,43 +229,50 @@ function deviceForm(state, d) {
   const os = el("input", { class: "in", value: d ? d.os : "", maxlength: 120, autocomplete: "off", placeholder: t("Sistema operativo"), "aria-label": t("Sistema operativo"), oninput: markDirty });
   const note = el("textarea", { class: "in", rows: 2, maxlength: 2000, value: d ? d.note : "", placeholder: t("Nota"), "aria-label": t("Nota"), oninput: markDirty });
 
-  // Anfitrión: una máquina (por su plataforma o su nombre) o una etiqueta nueva.
+  // Plataforma de virtualización: para una VM, dónde se virtualiza; para una máquina física, qué ejecuta.
   const deviceId = d ? d.id : null;
-  const candidates = hostCandidates(state, deviceId);
-  const currentHost = d && d.host_id != null ? deviceById(state, d.host_id) : null;
-  const currentValue = currentHost ? hostLabels(state, deviceId).find((l) => l.id === currentHost.id)?.value || currentHost.name : "";
-  const hostList = el("datalist", { id: "host-list" }, candidates.map((c) => el("option", { value: c.name }, c.platform || typeLabel(c.type))));
-  const host = el("input", { class: "in", list: "host-list", autocomplete: "off", maxlength: 120, value: currentValue, placeholder: t("Sin anfitrión: escribe o elige uno"), "aria-label": t("Anfitrión"), oninput: markDirty });
-  const hostHint = el("div", { class: "hint" });
-  const syncHost = () => {
-    const value = host.value.trim();
-    const target = resolveHost(state, deviceId, value);
-    hostHint.textContent = !value
-      ? ""
-      : target
-        ? target.name.toLowerCase() === value.toLowerCase()
-          ? ""
-          : t("Irá dentro de {name}.", { name: target.name })
-        : ambiguousHost(state, deviceId, value)
-          ? t("Varias máquinas usan {name}: elige una en los botones.", { name: value })
-          : t("Se creará el anfitrión “{name}”.", { name: value });
+  const platform = el("input", { class: "in", maxlength: 60, autocomplete: "off", value: d ? d.platform : "", placeholder: t("p. ej. Vates XCP-ng, VMware Workstation Pro"), "aria-label": t("Plataforma de virtualización"), oninput: markDirty });
+  // Máquina física (opcional): una existente o un nombre nuevo, que se crea al guardar.
+  const machineList = machines(state).filter((m) => m.id !== deviceId);
+  const currentMachine = d && d.host_id != null ? deviceById(state, d.host_id) : null;
+  const machine = el("input", { class: "in", list: "machine-list", autocomplete: "off", maxlength: 120, value: currentMachine ? currentMachine.name : "", placeholder: t("Opcional, p. ej. Cubito o Mi PC"), "aria-label": t("Máquina física"), oninput: markDirty });
+  const machineOptions = el("datalist", { id: "machine-list" }, machineList.map((m) => el("option", { value: m.name }, m.platform)));
+  const machineHint = el("div", { class: "hint" });
+  const findMachine = () => machineList.find((m) => m.name.toLowerCase() === machine.value.trim().toLowerCase());
+  const syncMachine = () => {
+    const value = machine.value.trim();
+    machineHint.textContent = value && !findMachine() ? t("Se creará la máquina física “{name}”.", { name: value }) : "";
   };
-  host.addEventListener("input", syncHost);
-  const readHost = () => {
-    const value = host.value.trim();
+  machine.addEventListener("input", syncMachine);
+  // Atajos: una plataforma que solo ejecuta una máquina rellena la máquina, y una máquina rellena su plataforma.
+  platform.addEventListener("input", () => {
+    const only = machineForPlatform(state, platform.value);
+    if (VIRTUAL.has(type.value) && only && only.id !== deviceId && !machine.value.trim()) {
+      machine.value = only.name;
+      machine.dispatchEvent(new Event("input", { bubbles: true }));
+      machineHint.textContent = t("Es la única máquina con {platform}.", { platform: only.platform });
+    }
+  });
+  machine.addEventListener("input", () => {
+    const chosen = findMachine();
+    if (chosen && chosen.platform && !platform.value.trim()) {
+      platform.value = chosen.platform;
+      platform.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  });
+  const readMachine = () => {
+    const value = machine.value.trim();
     if (!value) return null;
-    if (ambiguousHost(state, deviceId, value)) return { ambiguous: value };
-    const target = resolveHost(state, deviceId, value);
-    return target ? { id: target.id } : { name: value };
+    const existing = findMachine();
+    return existing ? { id: existing.id } : { name: value };
   };
-
-  // Plataforma propia, para los equipos que alojan VMs.
-  const platform = el("input", { class: "in", maxlength: 60, autocomplete: "off", value: d ? d.platform : "", placeholder: t("Plataforma, p. ej. Proxmox VE"), "aria-label": t("Plataforma"), oninput: markDirty });
-  const hostBlock = field(t("Anfitrión"), host, hostList, hostHint, hostPicker(state, d ? d.id : null, host));
-  const platformBlock = field(t("Plataforma de virtualización (opcional)"), platform, choicePicker(state.platform_choices, platform, forgetPlatform));
+  const platformBlock = field(t("Plataforma de virtualización"), platform, platformPicker(state, platform));
+  const machineBlock = field(t("Máquina física (opcional)"), machine, machineOptions, machineHint, machinePicker(machineList, machine));
   const syncType = () => {
-    hostBlock.hidden = !HAS_HOST.has(type.value);
-    platformBlock.hidden = !IS_HOST.has(type.value);
+    machineBlock.hidden = !VIRTUAL.has(type.value);
+    platformBlock.querySelector(".lbl").textContent = VIRTUAL.has(type.value)
+      ? t("Plataforma de virtualización")
+      : t("Plataforma que ejecuta (opcional)");
   };
   type.addEventListener("change", syncType);
 
@@ -333,19 +349,13 @@ function deviceForm(state, d) {
       return;
     }
     if (!addTyped()) return;
-    const chosenHost = HAS_HOST.has(type.value) ? readHost() : null;
-    if (chosenHost?.ambiguous) {
-      toast(t("Varias máquinas usan {name}: elige una en los botones.", { name: chosenHost.ambiguous }), "error");
-      host.focus();
-      return;
-    }
     const body = {
       name: name.value,
       type: type.value,
       os: os.value,
       note: note.value,
-      platform: IS_HOST.has(type.value) ? platform.value : "",
-      host: chosenHost,
+      platform: platform.value,
+      host: VIRTUAL.has(type.value) ? readMachine() : null,
     };
     const add = addresses.filter((a) => !original.includes(a));
     const remove = original.filter((a) => !addresses.includes(a));
@@ -361,7 +371,7 @@ function deviceForm(state, d) {
   };
   name.addEventListener("keydown", (e) => e.key === "Enter" && save());
   paintIps();
-  syncHost();
+  syncMachine();
   syncType();
 
   const remove = d
@@ -385,8 +395,8 @@ function deviceForm(state, d) {
     field(t("Nombre"), name),
     el("div", { class: "two" }, field(t("Tipo"), type), field(t("Sistema operativo"), os)),
     osPicker(state, os, forgetOs),
-    hostBlock,
     platformBlock,
+    machineBlock,
     field(t("IPs de este equipo"), chips),
     warnings,
     el("div", { class: "add-ip" }, picker),
@@ -403,46 +413,44 @@ function deviceForm(state, d) {
   );
 }
 
-// Botones con tus etiquetas de anfitrión. Las que no están en uso llevan × y se eliminan del todo
-// (la etiqueta guardada y, si existe, el anfitrión vacío con ese nombre).
-function hostPicker(state, deviceId, input) {
-  let labels = hostLabels(state, deviceId);
+// Botones que rellenan un campo; con × solo los que se pueden quitar (onRemove recibe el elemento).
+function buttonPicker(items, input, onRemove) {
+  let list = [...items];
   const box = el("div", { class: "os-picker" });
   const paint = () => {
     const q = input.value.trim().toLowerCase();
-    const shown = labels.filter((l) => l.value.toLowerCase() !== q && `${l.label} ${l.detail} ${l.value}`.toLowerCase().includes(q));
+    const shown = list.filter((i) => i.value.toLowerCase() !== q && `${i.label} ${i.detail || ""}`.toLowerCase().includes(q));
     box.replaceChildren(
-      ...shown.map((l) =>
+      ...shown.map((i) =>
         el(
           "span",
-          { class: "os-chip" + (l.removable ? "" : " in-use"), title: l.removable ? null : t("En uso: tiene equipos dentro o IPs, no se puede eliminar") },
+          { class: "os-chip" + (i.removable ? "" : " in-use"), title: i.hint || null },
           el(
             "button",
             {
               type: "button",
               class: "os-pick",
-              title: l.detail ? t("{label} en {name}", { label: l.label, name: l.detail }) : t("Usar {name}", { name: l.label }),
               onclick: () => {
-                input.value = l.value;
+                input.value = i.value;
                 input.dispatchEvent(new Event("input", { bubbles: true }));
                 input.focus();
               },
             },
-            l.label,
-            l.detail ? el("span", { class: "os-detail" }, t("en {name}", { name: l.detail })) : null,
+            i.label,
+            i.detail ? el("span", { class: "os-detail" }, i.detail) : null,
           ),
-          l.removable &&
+          i.removable &&
             el(
               "button",
               {
                 type: "button",
                 class: "x",
-                title: t("Eliminar etiqueta"),
-                "aria-label": t("Eliminar {name}", { name: l.label }),
+                title: t("Quitar de la lista"),
+                "aria-label": t("Quitar {name} de la lista", { name: i.label }),
                 onclick: () => {
-                  labels = labels.filter((x) => x !== l);
+                  list = list.filter((x) => x !== i);
                   paint();
-                  removeHostLabel(l);
+                  onRemove(i);
                 },
               },
               "×",
@@ -456,16 +464,26 @@ function hostPicker(state, deviceId, input) {
   return box;
 }
 
-async function removeHostLabel(label) {
-  let ok = true;
-  if (label.id != null) ok = await act("devices/delete", { id: label.id }, null, { quiet: true });
-  if (ok && label.id == null && liveState.platform_choices.some((p) => p.toLowerCase() === label.label.toLowerCase())) {
-    ok = await act("platforms/forget", { name: label.label }, null, { quiet: true });
-  }
-  if (ok) {
-    toast(t("«{name}» eliminado de tus anfitriones", { name: label.detail || label.label }));
-    render({ soft: true }); // la lista se actualiza; el formulario a medias se respeta
-  }
+// Plataformas guardadas: × mientras ningún equipo las use.
+function platformPicker(state, input) {
+  const items = platformLabels(state).map((l) => ({
+    label: l.name,
+    value: l.name,
+    removable: l.removable,
+    hint: l.removable ? null : t("En uso por algún equipo, no se puede quitar"),
+  }));
+  return buttonPicker(items, input, (i) =>
+    act("platforms/forget", { name: i.value }, t("«{name}» quitado de la lista", { name: i.value }), { quiet: true }),
+  );
+}
+
+// Máquinas físicas existentes (se borran desde su ficha, no desde aquí).
+function machinePicker(list, input) {
+  return buttonPicker(
+    list.map((m) => ({ label: m.name, detail: m.platform, value: m.name, removable: false })),
+    input,
+    () => {},
+  );
 }
 
 // Desplegable de mis IPs reservadas, agrupadas por red.

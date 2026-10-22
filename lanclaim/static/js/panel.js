@@ -78,17 +78,16 @@ async function copy(text) {
   toast(t("{ip} copiada", { ip: text }));
 }
 
-// «Corre en proxmox-01 (Proxmox VE)», con enlace al anfitrión.
+// «Vates XCP-ng · en Cubito», con enlace a la máquina física.
 function hostLine(state, d) {
-  const host = d.host_id != null ? state.devices.find((x) => x.id === d.host_id) : null;
-  if (!host) return null;
+  const machine = d.host_id != null ? state.devices.find((x) => x.id === d.host_id) : null;
+  if (!d.platform && !machine) return null;
   return el(
     "div",
     { class: "host-line" },
-    t("Corre en"),
-    " ",
-    el("button", { type: "button", class: "link", onclick: () => editDevice(host.id) }, host.name),
-    host.platform && host.platform.toLowerCase() !== host.name.toLowerCase() ? el("span", { class: "platform" }, host.platform) : null,
+    d.platform && d.type !== "fisica" ? el("span", { class: "platform" }, d.platform) : null,
+    machine ? t("en") : null,
+    machine ? el("button", { type: "button", class: "link", onclick: () => editDevice(machine.id) }, machine.name) : null,
   );
 }
 

@@ -361,6 +361,8 @@ button.ipc:hover { border-color: var(--link); }
   content: ""; position: absolute; left: calc(var(--indent) - 12px); top: -2px; bottom: 50%; width: 12px;
   border-left: 1px solid var(--line-2); border-bottom: 1px solid var(--line-2); border-bottom-left-radius: 6px;
 }
+.dev-group { display: flex; align-items: center; gap: 10px; padding: 12px 10px 4px; }
+.dev-group + .dev-row::before { top: 0; }
 .dev-main { display: flex; align-items: center; gap: 11px; border: 0; background: none; padding: 0; text-align: left; min-width: 0; flex: 1 1 220px; }
 .dev-main:hover .dev-title { color: var(--resv); }
 .dev-text { display: flex; flex-direction: column; min-width: 0; }

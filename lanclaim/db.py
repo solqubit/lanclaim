@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 MAX_ADDRESSES = 4096
 MIN_PREFIX, MAX_PREFIX = 22, 30
 DEVICE_TYPES = ('vm', 'fisica', 'contenedor', 'otro')
@@ -48,6 +48,22 @@ ALTER TABLE devices ADD COLUMN platform TEXT NOT NULL DEFAULT '';
 CREATE INDEX devices_host ON devices(host_id);
 CREATE TABLE platform_choices (name TEXT NOT NULL, name_key TEXT PRIMARY KEY, used_at TEXT NOT NULL);
 """ + ''.join(f"INSERT INTO platform_choices VALUES('{p}', '{p.lower()}', '');\n" for p in reversed(DEFAULT_PLATFORMS)),
+    # v8: «anfitrión» se separa en plataforma de virtualización (de cada VM) y máquina física (opcional).
+    8: """
+UPDATE devices SET platform = (SELECT CASE WHEN h.platform <> '' THEN h.platform ELSE h.name END
+                               FROM devices h WHERE h.id = devices.host_id)
+ WHERE host_id IS NOT NULL AND platform = '';
+CREATE TEMP TABLE label_hosts AS
+ SELECT id FROM devices WHERE type = 'fisica' AND os = '' AND note = '' AND lower(platform) = name_key
+   AND id NOT IN (SELECT device_id FROM ips WHERE device_id IS NOT NULL);
+UPDATE devices SET host_id = NULL WHERE host_id IN (SELECT id FROM label_hosts);
+DELETE FROM devices WHERE id IN (SELECT id FROM label_hosts);
+DROP TABLE label_hosts;
+UPDATE devices SET host_id = NULL WHERE type = 'fisica'
+ OR host_id IN (SELECT id FROM devices WHERE type <> 'fisica');
+INSERT OR IGNORE INTO platform_choices(name, name_key, used_at)
+ SELECT platform, lower(platform), created_at FROM devices WHERE platform <> '';
+""",
 }
 
 
@@ -377,34 +393,24 @@ class Store:
         with self.transaction() as db:
             db.execute('DELETE FROM platform_choices WHERE name_key=?', (name.casefold(),))
 
-    def _resolve_host(self, db, host, device_id=None):
-        """Anfitrión por id o por nombre (si no existe, se crea como equipo físico con su plataforma)."""
+    def _resolve_host(self, db, host, platform=''):
+        """Máquina física donde corre una VM: por id o por nombre (si no existe, se crea con la plataforma de la VM)."""
         if host is None:
             return None
         if not isinstance(host, dict):
-            raise Invalid('Anfitrión inválido.')
+            raise Invalid('Máquina física inválida.')
         if 'id' in host:
-            host_id = _int_id(host['id'], 'anfitrión')
-            if db.execute('SELECT 1 FROM devices WHERE id=?', (host_id,)).fetchone() is None:
-                raise Invalid('Ese anfitrión ya no existe.')
+            row = db.execute('SELECT id, type FROM devices WHERE id=?', (_int_id(host['id'], 'máquina'),)).fetchone()
+            if row is None:
+                raise Invalid('Esa máquina física ya no existe.')
         else:
-            name = _text(host, 'name', 120, True, 'nombre del anfitrión')
-            row = db.execute('SELECT id FROM devices WHERE name_key=?', (name.casefold(),)).fetchone()
-            platform = host.get('platform')
-            if not platform:
-                # El nombre es la etiqueta del anfitrión («VMware ESXi», «Mi cluster»): se usa como plataforma y
-                # queda guardado para reutilizarlo; si coincide con una conocida, se respeta su escritura.
-                known = db.execute('SELECT name FROM platform_choices WHERE name_key=?', (name.casefold(),)).fetchone()
-                platform = known['name'] if known else name[:60]
-            host_id = row['id'] if row else self._insert_device(
-                db, _device_fields({'name': name, 'type': 'fisica', 'platform': platform}))
-        # Sin ciclos: el anfitrión no puede ser el propio equipo ni algo que corre dentro de él.
-        current = host_id
-        while device_id is not None and current is not None:
-            if current == device_id:
-                raise Invalid('Un equipo no puede ser anfitrión de sí mismo ni de quien lo aloja.')
-            current = db.execute('SELECT host_id FROM devices WHERE id=?', (current,)).fetchone()['host_id']
-        return host_id
+            name = _text(host, 'name', 120, True, 'máquina física')
+            row = db.execute('SELECT id, type FROM devices WHERE name_key=?', (name.casefold(),)).fetchone()
+            if row is None:
+                return self._insert_device(db, _device_fields({'name': name, 'type': 'fisica', 'platform': platform}))
+        if row['type'] != 'fisica':
+            raise Invalid('Una VM o contenedor solo puede correr en una máquina física.')
+        return row['id']
 
     def _insert_device(self, db, fields, host_id=None):
         self._remember(db, 'os_choices', fields['os'])
@@ -433,7 +439,8 @@ class Store:
         fields = _device_fields(fields)
         targets = _optional_addresses(addresses)
         with self.transaction() as db:
-            device_id = self._insert_device(db, fields, self._resolve_host(db, host))
+            host_id = None if fields['type'] == 'fisica' else self._resolve_host(db, host, fields['platform'])
+            device_id = self._insert_device(db, fields, host_id)
             self._change_device_ips(db, device_id, targets, [])
             return device_id
 
@@ -446,6 +453,8 @@ class Store:
         with self.transaction() as db:
             if db.execute('SELECT 1 FROM devices WHERE id=?', (device_id,)).fetchone() is None:
                 raise Invalid('Ese equipo ya no existe.')
+            if fields['type'] != 'fisica' and db.execute('SELECT 1 FROM devices WHERE host_id=?', (device_id,)).fetchone():
+                raise Invalid('Tiene VMs dentro: muévelas a otra máquina antes de cambiar el tipo.')
             clash = db.execute('SELECT 1 FROM devices WHERE name_key=? AND id<>?',
                                (fields['name'].casefold(), device_id)).fetchone()
             if clash:
@@ -455,8 +464,13 @@ class Store:
             db.execute('UPDATE devices SET name=?, name_key=?, type=?, os=?, note=?, platform=? WHERE id=?',
                        (fields['name'], fields['name'].casefold(), fields['type'], fields['os'], fields['note'],
                         fields['platform'], device_id))
-            if has_host:
-                db.execute('UPDATE devices SET host_id=? WHERE id=?', (self._resolve_host(db, host, device_id), device_id))
+            if fields['type'] == 'fisica':
+                db.execute('UPDATE devices SET host_id=NULL WHERE id=?', (device_id,))
+            elif has_host:
+                host_id = self._resolve_host(db, host, fields['platform'])
+                if host_id == device_id:
+                    raise Invalid('Un equipo no puede correr dentro de sí mismo.')
+                db.execute('UPDATE devices SET host_id=? WHERE id=?', (host_id, device_id))
             self._change_device_ips(db, device_id, add, remove)
 
     def delete_device(self, device_id):

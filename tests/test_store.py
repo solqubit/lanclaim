@@ -45,7 +45,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual({k: state[k] for k in ('networks', 'ips', 'devices', 'observations', 'os_choices')},
                          {'networks': [], 'ips': [], 'devices': [], 'observations': {}, 'os_choices': []})
         db = sqlite3.connect(old)
-        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 7)
+        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         db.close()
         self.assertNotIn('machines', tables)
@@ -65,79 +65,92 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(state['os_choices'], ['Debian 12'])
         self.assertEqual([(d['host_id'], d['platform']) for d in state['devices']], [(None, ''), (None, '')])
 
-    def test_schema_6_upgrade_keeps_data_and_adds_hosts(self):
-        old = Path(self.temp.name) / 'v6.sqlite3'
-        db = sqlite3.connect(old)
-        db.executescript(V5_SCHEMA + """
-            CREATE TABLE os_choices (name TEXT NOT NULL, name_key TEXT PRIMARY KEY, used_at TEXT NOT NULL);
-            INSERT INTO devices(name, name_key, type, os, note, created_at) VALUES('glpi','glpi','vm','Debian 13','','t');
-            INSERT INTO ips(address, sort_key, device_id, note, claimed_at) VALUES('192.168.1.20', 3232235796, 1, 'nota', 't');
-            INSERT INTO os_choices VALUES('Debian 13', 'debian 13', 't');
-            PRAGMA user_version=6;""")
+    def find(self, store, name):
+        return next((d for d in store.state()['devices'] if d['name'] == name), None)
+
+    def make_v7(self, path):
+        from lanclaim.db import MIGRATIONS
+        db = sqlite3.connect(path)
+        db.executescript(V5_SCHEMA + MIGRATIONS[6] + MIGRATIONS[7] + """
+            INSERT INTO devices(id, name, name_key, type, os, note, platform, host_id, created_at) VALUES
+              (1, 'Vates Mini PC', 'vates mini pc', 'fisica', '', '', 'Vates XCP-ng', NULL, 't'),
+              (2, 'Nagios XI', 'nagios xi', 'vm', 'Centos 9', '', '', 1, 't'),
+              (3, 'VMware ESXi', 'vmware esxi', 'fisica', '', '', 'VMware ESXi', NULL, 't'),
+              (4, 'windows-dc', 'windows-dc', 'vm', '', '', '', 3, 't'),
+              (5, 'nested', 'nested', 'vm', '', '', '', 2, 't'),
+              (6, 'GLPI', 'glpi', 'vm', 'Ubuntu 24.04', '', '', NULL, 't');
+            INSERT INTO ips(address, sort_key, device_id, note, claimed_at) VALUES
+              ('192.168.0.237', 3232235757, 1, '', 't'), ('192.168.0.30', 3232235550, 2, 'nota', 't'),
+              ('192.168.0.33', 3232235553, 6, '', 't');
+            PRAGMA user_version=7;""")
         db.close()
+
+    def test_schema_7_upgrade_turns_hosts_into_platform_and_machine(self):
+        old = Path(self.temp.name) / 'v7.sqlite3'
+        self.make_v7(old)
         store = Store(old)
         state = store.state()
-        self.assertEqual(state['devices'][0]['name'], 'glpi')
-        self.assertEqual(state['ips'][0]['note'], 'nota')
-        self.assertEqual(state['os_choices'], ['Debian 13'])
-        self.assertIn('Proxmox VE', state['platform_choices'])
-        store.update_device(1, {'name': 'glpi', 'type': 'vm', 'host': {'name': 'proxmox-01', 'platform': 'Proxmox VE'}})
-        self.assertEqual(self.find(store, 'glpi')['host_id'], self.find(store, 'proxmox-01')['id'])
+        # Real machine kept; its VM inherits the platform and stays on it.
+        nagios = self.find(store, 'Nagios XI')
+        self.assertEqual((nagios['platform'], nagios['host_id']), ('Vates XCP-ng', 1))
+        # A host that was only a label is no longer a machine; its VM keeps the platform.
+        self.assertIsNone(self.find(store, 'VMware ESXi'))
+        windows = self.find(store, 'windows-dc')
+        self.assertEqual((windows['platform'], windows['host_id']), ('VMware ESXi', None))
+        # A VM can only run on a physical machine.
+        self.assertIsNone(self.find(store, 'nested')['host_id'])
+        # Nothing else changes.
+        self.assertEqual(self.find(store, 'GLPI')['platform'], '')
+        self.assertEqual([(i['address'], i['note']) for i in state['ips']],
+                         [('192.168.0.30', 'nota'), ('192.168.0.33', ''), ('192.168.0.237', '')])
+        self.assertIn('VMware ESXi', state['platform_choices'])
 
-    def find(self, store, name):
-        return next(d for d in store.state()['devices'] if d['name'] == name)
-
-    def test_host_by_name_is_created_with_platform(self):
-        vm = self.store.create_device({'name': 'glpi', 'type': 'vm', 'host': {'name': 'cluster-vmware', 'platform': 'VMware ESXi'}})
-        host = self.device_named('cluster-vmware')
-        self.assertEqual((host['type'], host['platform']), ('fisica', 'VMware ESXi'))
-        self.assertEqual(self.device_named('glpi')['host_id'], host['id'])
-        # Reusing the host by name (any case) neither duplicates it nor changes its platform.
-        self.store.create_device({'name': 'jellyfin', 'type': 'vm', 'host': {'name': 'CLUSTER-VMWARE', 'platform': 'Hyper-V'}})
+    def test_vm_runs_on_a_physical_machine_created_by_name(self):
+        vm = self.store.create_device({'name': 'Servidor 1', 'type': 'vm', 'platform': 'VMware Workstation Pro',
+                                       'host': {'name': 'Mi PC'}})
+        pc = self.device_named('Mi PC')
+        self.assertEqual((pc['type'], pc['platform']), ('fisica', 'VMware Workstation Pro'))  # takes the VM's platform
+        self.assertEqual(self.device_named('Servidor 1')['host_id'], pc['id'])
+        # The same machine by name (any case) is reused, not duplicated.
+        self.store.create_device({'name': 'Servidor 2', 'type': 'vm', 'platform': 'VMware Workstation Pro', 'host': {'name': 'mi pc'}})
         self.assertEqual(len(self.store.state()['devices']), 3)
-        self.assertEqual(self.device_named('cluster-vmware')['platform'], 'VMware ESXi')
-        self.assertEqual(self.store.state()['platform_choices'][0], 'VMware ESXi')
+        self.assertEqual(self.store.state()['platform_choices'][0], 'VMware Workstation Pro')
         # By id, and cleared with None.
-        self.store.update_device(vm, {'name': 'glpi', 'type': 'vm', 'host': {'id': host['id']}})
-        self.store.update_device(vm, {'name': 'glpi', 'type': 'vm', 'host': None})
-        self.assertIsNone(self.device_named('glpi')['host_id'])
-
-    def test_host_named_like_a_platform_gets_that_platform(self):
-        # "VMware ESXi" as the host name: no need to type the platform again.
-        self.store.create_device({'name': 'glpi', 'type': 'vm', 'host': {'name': 'vmware esxi'}})
-        host = self.device_named('vmware esxi')
-        self.assertEqual(host['platform'], 'VMware ESXi')
-        # Any other name is the user's own label: it is saved so it can be reused (and removed) later.
-        self.store.create_device({'name': 'pihole', 'type': 'contenedor', 'host': {'name': 'Mi cluster'}})
-        self.assertEqual(self.device_named('Mi cluster')['platform'], 'Mi cluster')
-        self.assertEqual(self.store.state()['platform_choices'][0], 'Mi cluster')
+        self.store.update_device(vm, {'name': 'Servidor 1', 'type': 'vm', 'host': {'id': pc['id']}})
+        self.store.update_device(vm, {'name': 'Servidor 1', 'type': 'vm', 'host': None})
+        self.assertIsNone(self.device_named('Servidor 1')['host_id'])
 
     def test_update_without_host_key_keeps_host(self):
-        vm = self.store.create_device({'name': 'glpi', 'type': 'vm', 'host': {'name': 'pve'}})
+        vm = self.store.create_device({'name': 'glpi', 'type': 'vm', 'host': {'name': 'Cubito'}})
         self.store.update_device(vm, {'name': 'glpi', 'type': 'vm', 'os': 'Debian 13'})
-        self.assertEqual(self.device_named('glpi')['host_id'], self.device_named('pve')['id'])
+        self.assertEqual(self.device_named('glpi')['host_id'], self.device_named('Cubito')['id'])
 
-    def test_host_cycles_are_rejected(self):
-        pve = self.store.create_device({'name': 'pve', 'type': 'fisica', 'platform': 'Proxmox VE'})
-        vm = self.store.create_device({'name': 'nested', 'type': 'vm', 'host': {'id': pve}})
-        inner = self.store.create_device({'name': 'inner', 'type': 'vm', 'host': {'id': vm}})
-        for device_id, name, host in ((pve, 'pve', pve), (pve, 'pve', inner), (vm, 'nested', inner)):
-            with self.subTest(device=name, host=host), self.assertRaises(Invalid):
-                self.store.update_device(device_id, {'name': name, 'type': 'vm', 'host': {'id': host}})
+    def test_only_physical_machines_host_vms(self):
+        cubito = self.store.create_device({'name': 'Cubito', 'type': 'fisica', 'platform': 'Vates XCP-ng'})
+        vm = self.store.create_device({'name': 'xoa', 'type': 'vm', 'host': {'id': cubito}})
+        with self.assertRaises(Invalid):
+            self.store.create_device({'name': 'inner', 'type': 'vm', 'host': {'id': vm}})
+        # A physical machine never runs on another one.
+        other = self.store.create_device({'name': 'nas', 'type': 'fisica', 'host': {'id': cubito}})
+        self.assertIsNone(self.find(self.store, 'nas')['host_id'])
+        # A machine with VMs inside cannot stop being physical.
+        with self.assertRaises(Invalid):
+            self.store.update_device(cubito, {'name': 'Cubito', 'type': 'vm'})
+        self.store.update_device(other, {'name': 'nas', 'type': 'otro'})  # no VMs inside: fine
         with self.assertRaises(Invalid):
             self.store.create_device({'name': 'x', 'type': 'vm', 'host': {'id': 999}})
 
-    def test_deleting_host_keeps_its_guests(self):
+    def test_deleting_machine_keeps_its_vms(self):
         pve = self.store.create_device({'name': 'pve', 'type': 'fisica'}, ['192.168.1.10'])
-        self.store.create_device({'name': 'glpi', 'type': 'vm', 'host': {'id': pve}}, ['192.168.1.20'])
+        self.store.create_device({'name': 'glpi', 'type': 'vm', 'platform': 'Proxmox VE', 'host': {'id': pve}}, ['192.168.1.20'])
         self.store.delete_device(pve)
         glpi = self.device_named('glpi')
-        self.assertIsNone(glpi['host_id'])
+        self.assertEqual((glpi['host_id'], glpi['platform']), (None, 'Proxmox VE'))
         self.assertEqual(self.ip('192.168.1.20')['device_id'], glpi['id'])
 
     def test_platform_choices_remembered_and_forgotten(self):
-        self.store.create_device({'name': 'xcp', 'type': 'fisica', 'platform': 'Vates XCP-ng'})
-        self.store.create_device({'name': 'mine', 'type': 'fisica', 'platform': 'Mi plataforma'})
+        self.store.create_device({'name': 'xoa', 'type': 'vm', 'platform': 'Vates XCP-ng'})
+        self.store.create_device({'name': 'mine', 'type': 'vm', 'platform': 'Mi plataforma'})
         choices = self.store.state()['platform_choices']
         self.assertEqual(choices[:2], ['Mi plataforma', 'Vates XCP-ng'])
         for default in ('Proxmox VE', 'VMware ESXi', 'Nutanix AHV', 'Hyper-V', 'Local host'):
@@ -145,7 +158,7 @@ class StoreTests(unittest.TestCase):
         self.store.forget_platform('mi plataforma')
         self.assertNotIn('Mi plataforma', self.store.state()['platform_choices'])
         with self.assertRaises(Invalid):
-            self.store.create_device({'name': 'y', 'type': 'fisica', 'platform': 'p' * 61})
+            self.store.create_device({'name': 'y', 'type': 'vm', 'platform': 'p' * 61})
 
     def test_os_choices_are_remembered(self):
         glpi = self.store.create_device({'name': 'glpi', 'type': 'vm', 'os': 'Debian 12'})

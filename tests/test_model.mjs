@@ -11,9 +11,9 @@ import {
   networkOf,
   osSuggestions,
   deviceTree,
-  hostCandidates,
-  hostLabels,
-  resolveHost,
+  machineForPlatform,
+  machines,
+  platformLabels,
   outsideIps,
   pingInfo,
   suggestIp,
@@ -111,61 +111,42 @@ assert.deepEqual(osSuggestions(choices, " DEBIAN 12 "), []); // already chosen
 assert.deepEqual(osSuggestions(choices, "", 2), ["Ubuntu 24.04", "Debian 12"]);
 assert.deepEqual(osSuggestions(undefined, "x"), []);
 
-const hosted = {
-  networks: [], ips: [], observations: {},
-  devices: [
-    { id: 1, name: "pve", type: "fisica", os: "", note: "", host_id: null, platform: "Proxmox VE" },
-    { id: 2, name: "glpi", type: "vm", os: "", note: "", host_id: 1, platform: "" },
-    { id: 3, name: "nested", type: "vm", os: "", note: "", host_id: 1, platform: "" },
-    { id: 4, name: "inner", type: "vm", os: "", note: "", host_id: 3, platform: "" },
-    { id: 5, name: "nas", type: "fisica", os: "", note: "", host_id: null, platform: "" },
-    { id: 6, name: "alone", type: "vm", os: "", note: "", host_id: 99, platform: "" },
-  ],
-};
-const flat = deviceTree(hosted, () => true).map((n) => `${n.depth}:${n.device.name}:${n.guests}`);
-// Hosts first (pve has guests), then the rest by name; guests nested under their host; a missing host counts as no host.
-assert.deepEqual(flat, ["0:pve:2", "1:glpi:0", "1:nested:1", "2:inner:0", "0:alone:0", "0:nas:0"]);
-// A match deep in the tree keeps its ancestors visible.
-assert.deepEqual(deviceTree(hosted, (d) => d.name === "inner").map((n) => n.device.name), ["pve", "nested", "inner"]);
-assert.deepEqual(hostCandidates(hosted, 3).map((d) => d.name), ["alone", "glpi", "nas", "pve"]);
-assert.deepEqual(hostCandidates(hosted, null).length, 6);
-
-const labelled = {
+const lab = {
   networks: [], observations: {},
-  ips: [
-    { address: "192.168.0.237", device_id: 1, note: "", claimed_at: "" },
-    { address: "192.168.0.20", device_id: 9, note: "", claimed_at: "" },
-  ],
+  ips: [{ address: "192.168.0.237", device_id: 1, note: "", claimed_at: "" }],
   devices: [
-    { id: 1, name: "Vates Mini PC", type: "fisica", os: "", note: "", host_id: null, platform: "Vates XCP-ng" },
-    { id: 2, name: "Nagios XI", type: "vm", os: "", note: "", host_id: null, platform: "" },
-    { id: 3, name: "pve1", type: "fisica", os: "", note: "", host_id: null, platform: "Proxmox VE" },
-    { id: 4, name: "pve2", type: "fisica", os: "", note: "", host_id: null, platform: "Proxmox VE" },
-    { id: 5, name: "glpi", type: "vm", os: "", note: "", host_id: 4, platform: "" },
-    { id: 7, name: "VMware ESXi", type: "fisica", os: "", note: "", host_id: null, platform: "VMware ESXi" },
+    { id: 1, name: "Cubito", type: "fisica", os: "", note: "", host_id: null, platform: "Vates XCP-ng" },
+    { id: 2, name: "Nagios XI", type: "vm", os: "Centos 9", note: "", host_id: 1, platform: "Vates XCP-ng" },
+    { id: 3, name: "XOA", type: "vm", os: "", note: "", host_id: 1, platform: "Vates XCP-ng" },
+    { id: 4, name: "Mi PC", type: "fisica", os: "", note: "", host_id: null, platform: "VMware Workstation Pro" },
+    { id: 5, name: "Servidor 2", type: "vm", os: "", note: "", host_id: 4, platform: "VMware Workstation Pro" },
+    { id: 6, name: "Servidor 1", type: "vm", os: "", note: "", host_id: 4, platform: "VMware Workstation Pro" },
+    { id: 7, name: "windows-dc", type: "vm", os: "", note: "", host_id: null, platform: "VMware ESXi" },
+    { id: 8, name: "GLPI", type: "vm", os: "", note: "", host_id: null, platform: "" },
     { id: 9, name: "nas", type: "fisica", os: "", note: "", host_id: null, platform: "" },
+    { id: 10, name: "lost", type: "vm", os: "", note: "", host_id: 99, platform: "" },
   ],
-  platform_choices: ["Vates XCP-ng", "Mi cluster", "Proxmox VE", "VMware ESXi", "KVM"],
+  platform_choices: ["VMware Workstation Pro", "Vates XCP-ng", "VMware ESXi", "Nutanix AHV", "KVM"],
 };
-const show = (l) => `${l.label}${l.detail ? " (" + l.detail + ")" : ""}=${l.value}:${l.removable ? "x" : "in-use"}`;
-// A machine with a platform is offered by its platform ("the host"), with the machine as detail.
-// Two machines with the same platform keep their names to tell them apart. A label already
-// covered by a machine is not repeated; the rest of the saved labels follow.
-assert.deepEqual(hostLabels(labelled, 2).map(show), [
-  "Proxmox VE (pve1)=pve1:x",
-  "Proxmox VE (pve2)=pve2:in-use",
-  "Vates XCP-ng (Vates Mini PC)=Vates XCP-ng:in-use",
-  "VMware ESXi=VMware ESXi:x",
-  "Mi cluster=Mi cluster:x",
-  "KVM=KVM:x",
+const flat = deviceTree(lab, () => true).map((n) => (n.group ? `G:${n.group}:${n.count}` : `${n.depth}:${n.device.name}:${n.guests}`));
+// Physical machines with their VMs first, then VMs grouped by platform (no machine), then the rest.
+assert.deepEqual(flat, [
+  "0:Cubito:2", "1:Nagios XI:0", "1:XOA:0",
+  "0:Mi PC:2", "1:Servidor 1:0", "1:Servidor 2:0",
+  "0:nas:0",
+  "G:VMware ESXi:1", "1:windows-dc:0",
+  "0:GLPI:0", "0:lost:0",
 ]);
-// Machines with IPs but no guests nor platform (nas) are not hosts; the edited device is never offered.
-assert.ok(!hostLabels(labelled, 2).some((l) => l.value === "nas" || l.value === "Nagios XI"));
-// Typing or picking resolves to the machine: by name, or by a platform only one machine has.
-assert.equal(resolveHost(labelled, 2, "Vates XCP-ng")?.id, 1);
-assert.equal(resolveHost(labelled, 2, "vates mini pc")?.id, 1);
-assert.equal(resolveHost(labelled, 2, "Proxmox VE"), null); // ambiguous: two machines
-assert.equal(resolveHost(labelled, 2, "pve2")?.id, 4);
-assert.equal(resolveHost(labelled, 2, "Mi cluster"), null); // new host
+// A match keeps its machine (or platform group) visible.
+assert.deepEqual(deviceTree(lab, (d) => d.name === "XOA").map((n) => n.group || n.device.name), ["Cubito", "XOA"]);
+assert.deepEqual(deviceTree(lab, (d) => d.name === "windows-dc").map((n) => n.group || n.device.name), ["VMware ESXi", "windows-dc"]);
+assert.deepEqual(machines(lab).map((d) => d.name), ["Cubito", "Mi PC", "nas"]);
+// Platform labels: removable only while no device uses them.
+assert.deepEqual(platformLabels(lab).map((l) => `${l.name}:${l.removable ? "x" : "in-use"}`),
+  ["VMware Workstation Pro:in-use", "Vates XCP-ng:in-use", "VMware ESXi:in-use", "Nutanix AHV:x", "KVM:x"]);
+// Choosing a platform fills the machine only when exactly one machine runs it.
+assert.equal(machineForPlatform(lab, "vates xcp-ng")?.name, "Cubito");
+assert.equal(machineForPlatform(lab, "VMware ESXi"), null);
+assert.equal(machineForPlatform({ ...lab, devices: [...lab.devices, { id: 11, name: "Cubito 2", type: "fisica", os: "", note: "", host_id: null, platform: "Vates XCP-ng" }] }, "Vates XCP-ng"), null);
 
 console.log("model: ok");
