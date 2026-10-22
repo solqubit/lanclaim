@@ -1,7 +1,8 @@
 // Panel lateral: acciones según lo seleccionado en el mapa.
 import { t, typeLabel } from "./i18n.js";
 import { act, editDevice, forgetOs, goto, markDirty, render, ui } from "./main.js";
-import { agoText, byIp, deviceIps, deviceOf, ipRecord, ipStatus, minutesSince, networkHosts, isEdge, pingInfo } from "./model.js";
+import { agoText, byIp, deviceIps, deviceOf, effectivePlatform, ipRecord, ipStatus, minutesSince, networkHosts, isEdge, pingInfo } from "./model.js";
+import { osIcon } from "./icons.js";
 import { confirmButton, deviceInput, el, toast } from "./ui.js";
 
 const PILL = { use: "Asignada", res: "Reservada", occ: "Ocupada por otro", free: "Libre" };
@@ -81,11 +82,12 @@ async function copy(text) {
 // «Vates XCP-ng · en Cubito», con enlace a la máquina física.
 function hostLine(state, d) {
   const machine = d.host_id != null ? state.devices.find((x) => x.id === d.host_id) : null;
-  if (!d.platform && !machine) return null;
+  const platform = d.type !== "fisica" ? effectivePlatform(state, d).name : "";
+  if (!platform && !machine) return null;
   return el(
     "div",
     { class: "host-line" },
-    d.platform && d.type !== "fisica" ? el("span", { class: "platform" }, d.platform) : null,
+    platform ? el("span", { class: "platform" }, platform) : null,
     machine ? t("en") : null,
     machine ? el("button", { type: "button", class: "link", onclick: () => editDevice(machine.id) }, machine.name) : null,
   );
@@ -165,7 +167,7 @@ function single(state, address) {
       el(
         "div",
         { class: "dev-card" },
-        el("button", { type: "button", class: "dev-name", title: t("Editar equipo"), onclick: () => editDevice(d.id) }, d.name),
+        el("div", { class: "dev-card-head" }, osIcon(d.os), el("button", { type: "button", class: "dev-name", title: t("Editar equipo"), onclick: () => editDevice(d.id) }, d.name)),
         el("div", { class: "muted" }, [typeLabel(d.type), d.os].filter(Boolean).join(" · ")),
         hostLine(state, d),
         others.length

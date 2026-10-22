@@ -1,13 +1,13 @@
 # Modelo de datos (versión 2)
 
-SQLite, esquema `user_version = 8`, en `lanclaim/db.py`. Al arrancar con una base de la 0.x (esquemas 1 a 4) se descartan todas sus tablas y se crea el esquema vacío: la versión 2 no conserva datos de la 0.x. Desde la v5 los datos se conservan: las migraciones se aplican en orden (v6 añade `os_choices`; v7, anfitrión y plataforma; v8 separa el anfitrión en plataforma de cada VM y máquina física, y elimina como máquinas los anfitriones que solo eran etiquetas).
+SQLite, esquema `user_version = 9`, en `lanclaim/db.py`. Al arrancar con una base de la 0.x (esquemas 1 a 4) se descartan todas sus tablas y se crea el esquema vacío: la versión 2 no conserva datos de la 0.x. Desde la v5 los datos se conservan: las migraciones se aplican en orden (v6 añade `os_choices`; v7, anfitrión y plataforma; v8 separa el anfitrión en plataforma de cada VM y máquina física, y elimina como máquinas los anfitriones que solo eran etiquetas; v9 añade la IP dinámica y hace que las VMs hereden la plataforma de su máquina).
 
 ## Tablas
 
 | Tabla | Campos | Notas |
 | --- | --- | --- |
 | `networks` | `id`, `cidr`, `name`, `created_at` | IPv4 de /22 a /30. No pueden solaparse. Entre todas, como máximo 4096 direcciones. |
-| `devices` | `id`, `name`, `type`, `os`, `note`, `platform`, `host_id`, `created_at` | `name` es obligatorio y único sin distinguir mayúsculas. `type` puede ser `vm`, `fisica`, `contenedor` u `otro`. `platform` es la plataforma de virtualización: en una VM, dónde se virtualiza; en una máquina física, qué ejecuta. `host_id` es la máquina física (solo de tipo `fisica`) donde corre una VM; al borrar la máquina pasa a nulo. Una máquina con VMs no puede dejar de ser física. |
+| `devices` | `id`, `name`, `type`, `os`, `note`, `platform`, `host_id`, `dhcp`, `created_at` | `name` es obligatorio y único sin distinguir mayúsculas. `type` puede ser `vm`, `fisica`, `contenedor` u `otro`. `platform`: en una máquina física, la plataforma que ejecuta; en una VM, la suya solo si no corre en una máquina con plataforma (si la tiene, la hereda y aquí queda vacío). `host_id` es la máquina física (solo `fisica`) donde corre; al borrarla pasa a nulo. `dhcp`: el equipo usa IP dinámica y no tiene IPs asignadas. |
 | `ips` | `id`, `address`, `device_id`, `note`, `claimed_at` | Una fila por IP reclamada. Si `device_id` es nulo, la IP está reservada. Al borrar el equipo, `device_id` pasa a nulo. |
 | `os_choices` | `name`, `name_key`, `used_at` | SO ya usados, sin repetir mayúsculas/minúsculas. Se añaden al crear o editar un equipo y sobreviven aunque se borre el equipo. Se muestran como botones, el más reciente primero; × los quita de la lista. |
 | `platform_choices` | `name`, `name_key`, `used_at` | Plataformas guardadas (de serie: Proxmox VE, VMware ESXi, Vates XCP-ng, Nutanix AHV, Hyper-V, KVM, Local host). En el formulario, × quita una de la lista solo si ningún equipo la usa. |

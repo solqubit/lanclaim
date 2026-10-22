@@ -1,5 +1,6 @@
 // Utilidades de interfaz. Todo el contenido del usuario se inserta como texto.
 import { t, typeLabel } from "./i18n.js";
+import { osIcon } from "./icons.js";
 import { findDeviceByName, osSuggestions } from "./model.js";
 
 const PROPS = new Set(["value", "checked", "selected", "disabled", "hidden", "open"]);
@@ -64,11 +65,11 @@ export function confirmButton({ label, sureLabel, onConfirm, className = "btn da
 
 // Botones con valores ya usados (SO, plataformas): un clic rellena el campo; × lo quita de la lista.
 export function osPicker(state, input, onForget) {
-  return choicePicker(state.os_choices, input, onForget);
+  return choicePicker(state.os_choices, input, onForget, (name) => osIcon(name, "xs"));
 }
 
-// onForget nulo: botones sin × (p. ej. anfitriones existentes, que no se «olvidan»).
-export function choicePicker(saved, input, onForget) {
+// onForget nulo: botones sin ×. iconFor: icono opcional delante de cada valor.
+export function choicePicker(saved, input, onForget, iconFor = null) {
   const box = el("div", { class: "os-picker" });
   let choices = [...(saved || [])];
   const paint = () => {
@@ -90,6 +91,7 @@ export function choicePicker(saved, input, onForget) {
                 input.focus();
               },
             },
+            iconFor ? iconFor(name) : null,
             name,
           ),
           onForget &&

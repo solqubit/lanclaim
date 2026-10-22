@@ -44,6 +44,8 @@ class Server(ThreadingHTTPServer):
             'devices/delete': lambda d: store.delete_device(d.get('id')),
             'os/forget': lambda d: store.forget_os(d.get('name')),
             'platforms/forget': lambda d: store.forget_platform(d.get('name')),
+            'platforms/rename': lambda d: store.rename_platform(d.get('name'), d.get('new')),
+            'os/rename': lambda d: store.rename_os(d.get('name'), d.get('new')),
             'scan/now': lambda d: scanner.scan_now(),
         }
 

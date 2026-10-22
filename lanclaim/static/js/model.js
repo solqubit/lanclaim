@@ -200,3 +200,47 @@ export function machineForPlatform(state, platform) {
   const found = q ? machines(state).filter((m) => (m.platform || "").toLowerCase() === q) : [];
   return found.length === 1 ? found[0] : null;
 }
+
+// Plataforma que de verdad usa un equipo: la de su máquina física si la tiene (heredada) o la suya.
+export function effectivePlatform(state, d) {
+  const machine = d.type !== "fisica" && d.host_id != null ? state.devices.find((x) => x.id === d.host_id && x.type === "fisica") : null;
+  if (machine && machine.platform) return { name: machine.platform, inherited: true, from: machine.name };
+  return { name: d.platform || "", inherited: false, from: null };
+}
+
+// Etiquetas guardadas con cuántos equipos las usan (la plataforma heredada cuenta).
+export function labelUsage(state) {
+  const count = (values, name) => values.filter((v) => v.toLowerCase() === name.toLowerCase()).length;
+  const platforms = state.devices.map((d) => effectivePlatform(state, d).name).filter(Boolean);
+  const systems = state.devices.map((d) => d.os || "").filter(Boolean);
+  return {
+    platforms: (state.platform_choices || []).map((name) => ({ name, count: count(platforms, name) })),
+    os: (state.os_choices || []).map((name) => ({ name, count: count(systems, name) })),
+  };
+}
+
+// Familia del sistema operativo, para su icono. null si no se reconoce.
+const OS_FAMILIES = [
+  ["windows", /\bwindows\b|\bwin(10|11|20\d\d)\b/],
+  ["proxmox", /proxmox/],
+  ["truenas", /truenas|freenas/],
+  ["ubuntu", /ubuntu/],
+  ["debian", /debian/],
+  ["rocky", /rocky/],
+  ["alma", /alma/],
+  ["centos", /centos/],
+  ["redhat", /red ?hat|\brhel\b/],
+  ["fedora", /fedora/],
+  ["alpine", /alpine/],
+  ["arch", /\barch\b|archlinux/],
+  ["opensuse", /suse/],
+  ["freebsd", /freebsd/],
+  ["macos", /mac ?os|os ?x\b/],
+  ["linux", /linux|mint|kali|manjaro|gentoo|slackware|raspbian/],
+];
+export function osFamily(os) {
+  const text = String(os || "").toLowerCase();
+  if (!text) return null;
+  const hit = OS_FAMILIES.find(([, re]) => re.test(text));
+  return hit ? hit[0] : null;
+}

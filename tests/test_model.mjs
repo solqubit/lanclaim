@@ -14,6 +14,9 @@ import {
   machineForPlatform,
   machines,
   platformLabels,
+  effectivePlatform,
+  labelUsage,
+  osFamily,
   outsideIps,
   pingInfo,
   suggestIp,
@@ -148,5 +151,35 @@ assert.deepEqual(platformLabels(lab).map((l) => `${l.name}:${l.removable ? "x" :
 assert.equal(machineForPlatform(lab, "vates xcp-ng")?.name, "Cubito");
 assert.equal(machineForPlatform(lab, "VMware ESXi"), null);
 assert.equal(machineForPlatform({ ...lab, devices: [...lab.devices, { id: 11, name: "Cubito 2", type: "fisica", os: "", note: "", host_id: null, platform: "Vates XCP-ng" }] }, "Vates XCP-ng"), null);
+
+const home = {
+  networks: [], observations: {}, ips: [],
+  devices: [
+    { id: 1, name: "PC SOL", type: "fisica", os: "Windows 11", note: "", host_id: null, platform: "VMware Workstation Pro", dhcp: true },
+    { id: 2, name: "W10", type: "vm", os: "Windows 10", note: "", host_id: 1, platform: "", dhcp: false },
+    { id: 3, name: "nas", type: "fisica", os: "TrueNAS Scale", note: "", host_id: null, platform: "", dhcp: false },
+    { id: 4, name: "app", type: "vm", os: "Ubuntu 24.04", note: "", host_id: 3, platform: "Docker", dhcp: false },
+    { id: 5, name: "loose", type: "vm", os: "ubuntu 24.04", note: "", host_id: null, platform: "VMware ESXi", dhcp: false },
+  ],
+  os_choices: ["Ubuntu 24.04", "Windows 10", "Windows 11", "TrueNAS Scale", "Arch"],
+  platform_choices: ["VMware Workstation Pro", "Docker", "VMware ESXi", "KVM"],
+};
+// Inherited from the machine when it has a platform; otherwise the VM's own one.
+assert.deepEqual(effectivePlatform(home, home.devices[1]), { name: "VMware Workstation Pro", inherited: true, from: "PC SOL" });
+assert.deepEqual(effectivePlatform(home, home.devices[3]), { name: "Docker", inherited: false, from: null });
+assert.deepEqual(effectivePlatform(home, home.devices[0]), { name: "VMware Workstation Pro", inherited: false, from: null });
+// Usage counts every device that ends up on that label (case-insensitive), in saved order.
+const usage = labelUsage(home);
+assert.deepEqual(usage.platforms.map((l) => `${l.name}:${l.count}`), ["VMware Workstation Pro:2", "Docker:1", "VMware ESXi:1", "KVM:0"]);
+assert.deepEqual(usage.os.map((l) => `${l.name}:${l.count}`), ["Ubuntu 24.04:2", "Windows 10:1", "Windows 11:1", "TrueNAS Scale:1", "Arch:0"]);
+// OS family for the icon.
+const families = {
+  "Windows Server 2022": "windows", "windows 10": "windows", "Ubuntu 24.04": "ubuntu", "Debian 13": "debian",
+  "Rocky Linux 9": "rocky", "Centos 9": "centos", "CentOS Stream 9": "centos", "Red Hat Enterprise Linux 9": "redhat",
+  "RHEL 8": "redhat", "Fedora 41": "fedora", "AlmaLinux 9": "alma", "Alpine 3.20": "alpine", "Arch": "arch",
+  "openSUSE Leap": "opensuse", "FreeBSD 14": "freebsd", "TrueNAS Scale": "truenas", "Proxmox VE 8": "proxmox",
+  "macOS Sequoia": "macos", "Linux Mint 22": "linux", "Kali Linux": "linux", "pfSense": null, "": null,
+};
+for (const [os, family] of Object.entries(families)) assert.equal(osFamily(os), family, os);
 
 console.log("model: ok");

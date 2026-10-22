@@ -25,7 +25,10 @@ Every address is in one of four states:
   - When editing a device you can remove an IP (it goes back to reserved), add one of your reserved IPs, or type a new IP, which is claimed on the spot.
   - Deleting a device keeps its IPs as reserved.
   - Operating systems you have typed are remembered and offered as one-click buttons, also when you create a device straight from the map.
-  - A VM or container has a virtualisation platform (Vates XCP-ng, VMware Workstation Pro, your own labels…) and, optionally, the physical machine it runs on. Picking a platform that only one machine runs fills in the machine. Devices are listed under their physical machine, or grouped by platform, and the form opens in a side panel so the list never jumps.
+  - A VM or container runs on a virtualisation platform (Vates XCP-ng, VMware Workstation Pro, your own labels…) and, optionally, on a physical machine; inside a machine that has a platform, the VM inherits it. Devices are listed under their physical machine, or grouped by platform, and the form opens in a side panel so the list never jumps.
+  - A device can use a dynamic IP (DHCP): no IP is reserved for it, while its VMs keep fixed IPs.
+  - **Labels** lists your platforms and operating systems with how many devices use each: rename one everywhere at once, or remove the ones nobody uses.
+  - Operating systems get their own icon (Windows, Ubuntu, Debian, Rocky, CentOS, Red Hat, Fedora, Alma, Alpine, Arch, openSUSE, FreeBSD, TrueNAS, Proxmox, macOS, other Linux), drawn in the app, with no downloads.
 - **Automatic ping:** the server pings every watched address every 5 minutes (`LANCLAIM_SCAN_INTERVAL`, in seconds; `0` turns it off). You can also press **Scan now**.
   - A green dot means the device answers and a red dot means it does not. An amber ring marks a free IP that answered in the last 7 days, probably a device that is switched off.
   - Ping never changes what is yours. A firewall may block ICMP, so a silent IP is not proof that it is free.

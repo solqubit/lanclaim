@@ -1,7 +1,8 @@
 // Vista Equipos: lista fija (máquinas físicas con sus VMs y VMs por plataforma) y formulario en el panel lateral.
 import { t, typeLabel } from "./i18n.js";
 import { act, forgetOs, goto, isBusy, markDirty, render, state as liveState, ui } from "./main.js";
-import { byIp, device as deviceById, deviceIps, deviceOf, deviceTree, machineForPlatform, machines, networkOf, pingInfo, platformLabels } from "./model.js";
+import { deviceIcon, osIcon } from "./icons.js";
+import { byIp, device as deviceById, deviceIps, deviceOf, deviceTree, effectivePlatform, labelUsage, machineForPlatform, machines, networkOf, pingInfo, platformLabels } from "./model.js";
 import { confirmButton, el, osPicker, toast } from "./ui.js";
 
 const TYPES = ["vm", "fisica", "contenedor", "otro"];
@@ -79,6 +80,7 @@ function header(state) {
       TYPES.filter(countOf).map((type) => filter(type, typeLabel(type), countOf(type))),
     ),
     el("span", { class: "spacer" }),
+    el("button", { type: "button", class: "btn" + (ui.editDev === "labels" ? " on" : ""), onclick: () => openDevice("labels") }, t("Etiquetas")),
     el("button", { type: "button", class: "btn primary", onclick: () => openDevice("new") }, "＋ ", t("Nuevo equipo")),
   );
 }
@@ -118,6 +120,8 @@ function groupRow({ group, count }) {
 
 function deviceRow(state, { device: d, depth, guests }) {
   const ips = deviceIps(state, d.id);
+  const own = d.type !== "fisica" && d.platform && !effectivePlatform(state, d).inherited && d.host_id != null;
+  const quietNoIps = d.dhcp || guests > 0; // una máquina que solo aloja VMs no «pide» IPs
   const meta = [typeLabel(d.type), d.os].filter(Boolean).join(" · ");
   return el(
     "div",
@@ -125,43 +129,26 @@ function deviceRow(state, { device: d, depth, guests }) {
     el(
       "button",
       { type: "button", class: "dev-main", title: t("Editar {name}", { name: d.name }), onclick: () => openDevice(d.id) },
-      typeIcon(d.type),
+      deviceIcon(d),
       el("span", { class: "dev-text" }, el("span", { class: "dev-title" }, d.name), el("span", { class: "dev-meta" }, meta)),
     ),
     el(
       "div",
       { class: "dev-side" },
-      d.type === "fisica" && d.platform ? el("span", { class: "platform" }, d.platform) : null,
+      (d.type === "fisica" && d.platform) || own ? el("span", { class: "platform" }, d.platform) : null,
+      d.dhcp ? el("span", { class: "dhcp", title: t("Usa IP dinámica (DHCP)") }, "DHCP") : null,
       guests ? el("span", { class: "guests" }, guests === 1 ? t("1 equipo dentro") : t("{n} equipos dentro", { n: guests })) : null,
       el(
         "div",
         { class: "chips" },
         ips.length
           ? ips.map((a) => el("button", { type: "button", class: "ipc", title: t("Ver en el mapa"), onclick: () => goto(a) }, pingDot(state, a), a))
-          : el("span", { class: "muted small" }, t("Sin IPs")),
+          : quietNoIps
+            ? null
+            : el("span", { class: "muted small" }, t("Sin IPs")),
       ),
     ),
   );
-}
-
-const ICONS = {
-  // VM: ventanas apiladas · Física: servidor de rack · Contenedor: cubo · Otro: nodo
-  vm: "M4 7h11v9H4zM8 4h12v9h-2",
-  fisica: "M4 5h16v5H4zM4 14h16v5H4zM7 7.5h.01M7 16.5h.01",
-  contenedor: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5",
-  otro: "M12 8a4 4 0 1 1 0 8a4 4 0 1 1 0-8M12 3v5M12 16v5M3 12h5M16 12h5",
-};
-
-function typeIcon(type) {
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("class", `type-ico ${type}`);
-  svg.setAttribute("aria-hidden", "true");
-  const path = document.createElementNS(ns, "path");
-  path.setAttribute("d", ICONS[type] || ICONS.otro);
-  svg.append(path);
-  return svg;
 }
 
 function pingDot(state, address) {
@@ -179,7 +166,7 @@ function ipChip(state, address, extra = null) {
 
 function devicePanel(state) {
   let d = null;
-  if (ui.editDev != null && ui.editDev !== "new") {
+  if (ui.editDev != null && ui.editDev !== "new" && ui.editDev !== "labels") {
     d = deviceById(state, ui.editDev);
     if (!d) ui.editDev = null; // borrado desde otra pestaña
   }
@@ -189,7 +176,10 @@ function devicePanel(state) {
     panel.append(idle(state));
     return panel;
   }
-  panel.append(el("button", { type: "button", class: "icon-btn sheet-close", "aria-label": t("Cerrar"), onclick: closePanel }, "×"), deviceForm(state, d));
+  panel.append(
+    el("button", { type: "button", class: "icon-btn sheet-close", "aria-label": t("Cerrar"), onclick: closePanel }, "×"),
+    ui.editDev === "labels" ? labelsPanel(state) : deviceForm(state, d),
+  );
   return panel;
 }
 
@@ -227,6 +217,9 @@ function deviceForm(state, d) {
     TYPES.map((k) => el("option", { value: k, selected: d ? d.type === k : k === "vm" }, typeLabel(k))),
   );
   const os = el("input", { class: "in", value: d ? d.os : "", maxlength: 120, autocomplete: "off", placeholder: t("Sistema operativo"), "aria-label": t("Sistema operativo"), oninput: markDirty });
+  const osPreview = el("span", { class: "os-preview" });
+  const syncOs = () => osPreview.replaceChildren(osIcon(os.value, "sm") || "");
+  os.addEventListener("input", syncOs);
   const note = el("textarea", { class: "in", rows: 2, maxlength: 2000, value: d ? d.note : "", placeholder: t("Nota"), "aria-label": t("Nota"), oninput: markDirty });
 
   // Plataforma de virtualización: para una VM, dónde se virtualiza; para una máquina física, qué ejecuta.
@@ -253,29 +246,52 @@ function deviceForm(state, d) {
       machineHint.textContent = t("Es la única máquina con {platform}.", { platform: only.platform });
     }
   });
-  machine.addEventListener("input", () => {
-    const chosen = findMachine();
-    if (chosen && chosen.platform && !platform.value.trim()) {
-      platform.value = chosen.platform;
-      platform.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-  });
+  // Con una máquina física que tiene plataforma, la VM la hereda: no se elige.
+  const inherited = el("div", { class: "inherited" });
+  const platformControls = el("div", {}, platform);
+  const inheritedFrom = () => (VIRTUAL.has(type.value) ? findMachine() : null);
+  const syncPlatform = () => {
+    const from = inheritedFrom();
+    const inheriting = !!(from && from.platform);
+    platformControls.hidden = inheriting;
+    inherited.hidden = !inheriting;
+    inherited.replaceChildren(
+      ...(inheriting ? [el("span", { class: "platform" }, from.platform), el("span", { class: "muted small" }, t("heredada de {name}", { name: from.name }))] : []),
+    );
+  };
+  machine.addEventListener("input", syncPlatform);
   const readMachine = () => {
     const value = machine.value.trim();
     if (!value) return null;
     const existing = findMachine();
     return existing ? { id: existing.id } : { name: value };
   };
-  const platformBlock = field(t("Plataforma de virtualización"), platform, platformPicker(state, platform));
+  platformControls.append(platformPicker(state, platform));
+  const platformBlock = field(t("Plataforma de virtualización"), inherited, platformControls);
   const machineBlock = field(t("Máquina física (opcional)"), machine, machineOptions, machineHint, machinePicker(machineList, machine));
   const syncType = () => {
     machineBlock.hidden = !VIRTUAL.has(type.value);
+    syncPlatform();
     platformBlock.querySelector(".lbl").textContent = VIRTUAL.has(type.value)
       ? t("Plataforma de virtualización")
       : t("Plataforma que ejecuta (opcional)");
   };
   type.addEventListener("change", syncType);
 
+  const dhcp = el("input", { type: "checkbox", checked: !!(d && d.dhcp), onchange: (e) => (markDirty(e), syncDhcp()) });
+  const dhcpWarn = el("p", { class: "warn", hidden: true });
+  const ipSection = el("div", {});
+  const syncDhcp = () => {
+    ipSection.hidden = dhcp.checked;
+    dhcpWarn.hidden = !(dhcp.checked && addresses.length);
+    dhcpWarn.textContent = t("Al guardar, sus IPs ({ips}) pasarán a reservadas.", { ips: addresses.join(", ") });
+  };
+  const dhcpBlock = el(
+    "label",
+    { class: "check" },
+    dhcp,
+    el("span", {}, el("b", {}, t("Usa IP dinámica (DHCP)")), el("span", { class: "muted small" }, t("No se le reserva IP. Las VMs que contiene pueden tener IPs fijas."))),
+  );
   const chips = el("div", { class: "chips form-ips" });
   const warnings = el("div", {});
   const picker = el("select", { class: "in", "aria-label": t("Añadir una de tus IPs reservadas") });
@@ -354,8 +370,9 @@ function deviceForm(state, d) {
       type: type.value,
       os: os.value,
       note: note.value,
-      platform: platform.value,
+      platform: inheritedFrom()?.platform ? "" : platform.value,
       host: VIRTUAL.has(type.value) ? readMachine() : null,
+      dhcp: dhcp.checked,
     };
     const add = addresses.filter((a) => !original.includes(a));
     const remove = original.filter((a) => !addresses.includes(a));
@@ -373,6 +390,8 @@ function deviceForm(state, d) {
   paintIps();
   syncMachine();
   syncType();
+  syncOs();
+  syncDhcp();
 
   const remove = d
     ? confirmButton({
@@ -393,14 +412,19 @@ function deviceForm(state, d) {
     { class: "dev-form" },
     el("h2", { class: "form-title" }, d ? t("Editar {name}", { name: d.name }) : t("Nuevo equipo")),
     field(t("Nombre"), name),
-    el("div", { class: "two" }, field(t("Tipo"), type), field(t("Sistema operativo"), os)),
+    el("div", { class: "two" }, field(t("Tipo"), type), field(t("Sistema operativo"), el("div", { class: "with-ico" }, osPreview, os))),
     osPicker(state, os, forgetOs),
-    platformBlock,
     machineBlock,
-    field(t("IPs de este equipo"), chips),
-    warnings,
-    el("div", { class: "add-ip" }, picker),
-    el("div", { class: "add-ip" }, typed, el("button", { type: "button", class: "btn", onclick: addTyped }, t("Añadir"))),
+    platformBlock,
+    dhcpBlock,
+    dhcpWarn,
+    (ipSection.append(
+      field(t("IPs de este equipo"), chips),
+      warnings,
+      el("div", { class: "add-ip" }, picker),
+      el("div", { class: "add-ip" }, typed, el("button", { type: "button", class: "btn", onclick: addTyped }, t("Añadir"))),
+    ),
+    ipSection),
     field(t("Nota"), note),
     el(
       "div",
@@ -410,6 +434,67 @@ function deviceForm(state, d) {
       remove ? el("span", { class: "spacer" }) : null,
       remove,
     ),
+  );
+}
+
+// ---------- Etiquetas: renombrar en todos los equipos o eliminar las que nadie usa ----------
+
+function labelsPanel(state) {
+  const usage = labelUsage(state);
+  return el(
+    "div",
+    { class: "labels" },
+    el("h2", { class: "form-title" }, t("Etiquetas")),
+    el("p", { class: "muted small" }, t("Renombrar cambia la etiqueta en todos los equipos que la usan. Solo se pueden eliminar las que no usa nadie.")),
+    labelSection(t("Plataformas de virtualización"), usage.platforms, "platforms", null),
+    labelSection(t("Sistemas operativos"), usage.os, "os", (name) => osIcon(name, "sm")),
+  );
+}
+
+function labelSection(title, items, kind, iconFor) {
+  return el(
+    "section",
+    { class: "label-group" },
+    el("h3", {}, title, " ", el("b", { class: "count" }, String(items.length))),
+    items.length ? el("ul", { class: "label-list" }, items.map((item) => labelRow(item, kind, iconFor))) : el("p", { class: "muted small" }, t("Ninguna todavía.")),
+  );
+}
+
+function labelRow({ name, count }, kind, iconFor) {
+  const input = el("input", { class: "in", value: name, maxlength: kind === "os" ? 120 : 60, "aria-label": t("Renombrar {name}", { name }) });
+  let sent = false; // Enter y después blur no deben renombrar dos veces
+  const rename = () => {
+    const next = input.value.trim();
+    input.removeAttribute("data-dirty");
+    if (sent || !next || next === name) return (input.value = sent ? input.value : name);
+    sent = true;
+    act(`${kind}/rename`, { name, new: next }, t("«{old}» ahora es «{name}»", { old: name, name: next }));
+  };
+  input.addEventListener("input", markDirty);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") rename();
+    if (e.key === "Escape") (input.value = name), input.removeAttribute("data-dirty"), input.blur();
+  });
+  input.addEventListener("blur", rename);
+  return el(
+    "li",
+    { class: "label-row" },
+    iconFor ? iconFor(name) || el("span", { class: "os-ico sm blank" }) : null,
+    input,
+    el("span", { class: "uses" + (count ? "" : " none") }, count === 1 ? t("1 equipo") : t("{n} equipos", { n: count })),
+    count
+      ? el("span", { class: "x-spacer" })
+      : el(
+          "button",
+          {
+            type: "button",
+            class: "icon-btn",
+            title: t("Eliminar etiqueta"),
+            "aria-label": t("Eliminar {name}", { name }),
+            onclick: () => act(`${kind === "os" ? "os" : "platforms"}/forget`, { name }, t("«{name}» quitado de la lista", { name })),
+          },
+          "×",
+        ),
   );
 }
 

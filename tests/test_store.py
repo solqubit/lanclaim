@@ -45,7 +45,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual({k: state[k] for k in ('networks', 'ips', 'devices', 'observations', 'os_choices')},
                          {'networks': [], 'ips': [], 'devices': [], 'observations': {}, 'os_choices': []})
         db = sqlite3.connect(old)
-        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
+        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         db.close()
         self.assertNotIn('machines', tables)
@@ -90,9 +90,10 @@ class StoreTests(unittest.TestCase):
         self.make_v7(old)
         store = Store(old)
         state = store.state()
-        # Real machine kept; its VM inherits the platform and stays on it.
+        # Real machine kept; its VM stays on it and (since v9) inherits the machine's platform.
         nagios = self.find(store, 'Nagios XI')
-        self.assertEqual((nagios['platform'], nagios['host_id']), ('Vates XCP-ng', 1))
+        self.assertEqual((nagios['platform'], nagios['host_id']), ('', 1))
+        self.assertEqual(self.find(store, 'Vates Mini PC')['platform'], 'Vates XCP-ng')
         # A host that was only a label is no longer a machine; its VM keeps the platform.
         self.assertIsNone(self.find(store, 'VMware ESXi'))
         windows = self.find(store, 'windows-dc')
@@ -147,6 +148,68 @@ class StoreTests(unittest.TestCase):
         glpi = self.device_named('glpi')
         self.assertEqual((glpi['host_id'], glpi['platform']), (None, 'Proxmox VE'))
         self.assertEqual(self.ip('192.168.1.20')['device_id'], glpi['id'])
+
+    def test_vm_inherits_platform_from_its_machine(self):
+        pc = self.store.create_device({'name': 'PC SOL', 'type': 'fisica', 'platform': 'VMware Workstation Pro'})
+        # The VM's own platform is not stored while its machine has one: it is inherited.
+        self.store.create_device({'name': 'W10', 'type': 'vm', 'platform': 'Hyper-V', 'host': {'id': pc}})
+        self.assertEqual(self.device_named('W10')['platform'], '')
+        # Without a machine (or with a machine without platform) the VM keeps its own.
+        nas = self.store.create_device({'name': 'nas', 'type': 'fisica'})
+        self.store.create_device({'name': 'app', 'type': 'vm', 'platform': 'Docker', 'host': {'id': nas}})
+        self.assertEqual(self.device_named('app')['platform'], 'Docker')
+
+    def test_schema_8_upgrade_makes_vms_inherit(self):
+        from lanclaim.db import MIGRATIONS
+        old = Path(self.temp.name) / 'v8.sqlite3'
+        db = sqlite3.connect(old)
+        db.executescript(V5_SCHEMA + MIGRATIONS[6] + MIGRATIONS[7] + MIGRATIONS[8] + """
+            INSERT INTO devices(id, name, name_key, type, os, note, platform, host_id, created_at) VALUES
+              (1, 'PC SOL', 'pc sol', 'fisica', 'Windows 11', '', 'VMware Workstation Pro', NULL, 't'),
+              (2, 'W10', 'w10', 'vm', 'Windows 10', '', 'VMware Workstation Pro', 1, 't'),
+              (3, 'nas', 'nas', 'fisica', '', '', '', NULL, 't'),
+              (4, 'app', 'app', 'vm', '', '', 'Docker', 3, 't'),
+              (5, 'loose', 'loose', 'vm', '', '', 'VMware ESXi', NULL, 't');
+            INSERT INTO ips(address, sort_key, device_id, note, claimed_at) VALUES ('192.168.0.34', 3232235554, 2, '', 't');
+            PRAGMA user_version=8;""")
+        db.close()
+        store = Store(old)
+        self.assertEqual(self.find(store, 'W10')['platform'], '')
+        self.assertEqual(self.find(store, 'app')['platform'], 'Docker')
+        self.assertEqual(self.find(store, 'loose')['platform'], 'VMware ESXi')
+        self.assertEqual(self.find(store, 'PC SOL')['dhcp'], False)
+        self.assertEqual(store.state()['ips'][0]['device_id'], 2)
+
+    def test_dhcp_device_holds_no_ips(self):
+        pc = self.store.create_device({'name': 'PC SOL', 'type': 'fisica', 'dhcp': True}, ['192.168.0.50'])
+        self.assertTrue(self.device_named('PC SOL')['dhcp'])
+        self.assertIsNone(self.ip('192.168.0.50')['device_id'])  # claimed, but not tied to a DHCP device
+        vm = self.store.create_device({'name': 'W10', 'type': 'vm'}, ['192.168.0.34'])
+        # Switching an existing device to DHCP releases its IPs back to reserved.
+        self.store.update_device(vm, {'name': 'W10', 'type': 'vm', 'dhcp': True}, add=['192.168.0.35'])
+        self.assertIsNone(self.ip('192.168.0.34')['device_id'])
+        self.assertIsNone(self.ip('192.168.0.35'))
+        self.store.update_device(vm, {'name': 'W10', 'type': 'vm', 'dhcp': False}, add=['192.168.0.34'])
+        self.assertEqual(self.ip('192.168.0.34')['device_id'], vm)
+        # Assigning an IP from the map to a DHCP device is refused.
+        with self.assertRaises(Invalid):
+            self.store.claim(['192.168.0.60'], {'id': pc})
+
+    def test_rename_labels_everywhere(self):
+        self.store.create_device({'name': 'a', 'type': 'vm', 'os': 'Centos 9', 'platform': 'vates'})
+        self.store.create_device({'name': 'b', 'type': 'vm', 'os': 'centos 9', 'platform': 'Vates'})
+        self.store.rename_os('CENTOS 9', 'CentOS Stream 9')
+        self.store.rename_platform('vates', 'Vates XCP-ng')
+        devices = self.store.state()['devices']
+        self.assertEqual({d['os'] for d in devices}, {'CentOS Stream 9'})
+        self.assertEqual({d['platform'] for d in devices}, {'Vates XCP-ng'})
+        state = self.store.state()
+        self.assertIn('CentOS Stream 9', state['os_choices'])
+        self.assertNotIn('Centos 9', state['os_choices'])
+        self.assertEqual(state['platform_choices'].count('Vates XCP-ng'), 1)  # merged with the existing default
+        for bad in ('', ' ', 'x' * 121):
+            with self.subTest(bad=bad), self.assertRaises(Invalid):
+                self.store.rename_os('CentOS Stream 9', bad)
 
     def test_platform_choices_remembered_and_forgotten(self):
         self.store.create_device({'name': 'xoa', 'type': 'vm', 'platform': 'Vates XCP-ng'})

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 MAX_ADDRESSES = 4096
 MIN_PREFIX, MAX_PREFIX = 22, 30
 DEVICE_TYPES = ('vm', 'fisica', 'contenedor', 'otro')
@@ -63,6 +63,12 @@ UPDATE devices SET host_id = NULL WHERE type = 'fisica'
  OR host_id IN (SELECT id FROM devices WHERE type <> 'fisica');
 INSERT OR IGNORE INTO platform_choices(name, name_key, used_at)
  SELECT platform, lower(platform), created_at FROM devices WHERE platform <> '';
+""",
+    # v9: IP dinámica por equipo, y las VMs heredan la plataforma de su máquina física.
+    9: """
+ALTER TABLE devices ADD COLUMN dhcp INTEGER NOT NULL DEFAULT 0;
+UPDATE devices SET platform = ''
+ WHERE host_id IS NOT NULL AND (SELECT h.platform FROM devices h WHERE h.id = devices.host_id) <> '';
 """,
 }
 
@@ -178,7 +184,10 @@ def _device_fields(data):
         'os': _text(data, 'os', 120, label='sistema operativo'),
         'note': _text(data, 'note', 2000, label='nota'),
         'platform': _text(data, 'platform', 60, label='plataforma'),
+        'dhcp': data.get('dhcp', False),
     }
+    if not isinstance(fields['dhcp'], bool):
+        raise Invalid('Valor de IP dinámica inválido.')
     if fields['type'] not in DEVICE_TYPES:
         raise Invalid('Tipo de equipo desconocido.')
     return fields
@@ -251,7 +260,8 @@ class Store:
         with self.connect() as db:
             networks = [dict(r) for r in db.execute('SELECT id, cidr, name FROM networks ORDER BY sort_key')]
             ips = [dict(r) for r in db.execute('SELECT address, device_id, note, claimed_at FROM ips ORDER BY sort_key')]
-            devices = [dict(r) for r in db.execute('SELECT id, name, type, os, note, host_id, platform FROM devices ORDER BY name_key')]
+            devices = [{**dict(r), 'dhcp': bool(r['dhcp'])} for r in db.execute(
+                'SELECT id, name, type, os, note, host_id, platform, dhcp FROM devices ORDER BY name_key')]
             rows = db.execute('SELECT address, up, checked_at, last_up_at FROM observations').fetchall()
             watched = set(self._watched(db))
             os_choices = [r[0] for r in db.execute('SELECT name FROM os_choices ORDER BY used_at DESC, rowid DESC')]
@@ -322,6 +332,8 @@ class Store:
         with self.transaction() as db:
             self._reject_edges(db, targets)
             device_id = self._resolve_device(db, device) if device is not None else None
+            if device_id is not None and db.execute('SELECT dhcp FROM devices WHERE id=?', (device_id,)).fetchone()['dhcp']:
+                raise Invalid('Ese equipo usa IP dinámica (DHCP): no se le asignan IPs.')
             claimed = assigned = 0
             for address in targets:
                 row = db.execute('SELECT device_id FROM ips WHERE address=?', (address,)).fetchone()
@@ -388,6 +400,25 @@ class Store:
         with self.transaction() as db:
             db.execute('DELETE FROM os_choices WHERE name_key=?', (name.casefold(),))
 
+    def _rename(self, table, column, limit, label, old, new):
+        old = _text({'v': old}, 'v', limit, True, label)
+        new = _text({'v': new}, 'v', limit, True, label)
+        with self.transaction() as db:
+            db.execute(f'UPDATE devices SET {column}=? WHERE lower({column})=?', (new, old.lower()))
+            db.execute(f'DELETE FROM {table} WHERE name_key=?', (old.casefold(),))
+            self._remember(db, table, new)
+
+    def rename_os(self, old, new):
+        self._rename('os_choices', 'os', 120, 'sistema operativo', old, new)
+
+    def rename_platform(self, old, new):
+        self._rename('platform_choices', 'platform', 60, 'plataforma', old, new)
+
+    def _inherits_platform(self, db, host_id):
+        """Una VM en una máquina física con plataforma la hereda: no guarda la suya."""
+        row = db.execute('SELECT platform FROM devices WHERE id=?', (host_id,)).fetchone() if host_id else None
+        return bool(row and row['platform'])
+
     def forget_platform(self, name):
         name = _text({'name': name}, 'name', 60, label='plataforma')
         with self.transaction() as db:
@@ -416,10 +447,10 @@ class Store:
         self._remember(db, 'os_choices', fields['os'])
         self._remember(db, 'platform_choices', fields['platform'])
         try:
-            return db.execute('INSERT INTO devices(name, name_key, type, os, note, platform, host_id, created_at) '
-                              'VALUES(?,?,?,?,?,?,?,?)',
+            return db.execute('INSERT INTO devices(name, name_key, type, os, note, platform, host_id, dhcp, created_at) '
+                              'VALUES(?,?,?,?,?,?,?,?,?)',
                               (fields['name'], fields['name'].casefold(), fields['type'], fields['os'],
-                               fields['note'], fields['platform'], host_id, now())).lastrowid
+                               fields['note'], fields['platform'], host_id, int(fields.get('dhcp', False)), now())).lastrowid
         except sqlite3.IntegrityError:
             raise Invalid(f'Ya existe un equipo llamado «{fields["name"]}».') from None
 
@@ -440,8 +471,17 @@ class Store:
         targets = _optional_addresses(addresses)
         with self.transaction() as db:
             host_id = None if fields['type'] == 'fisica' else self._resolve_host(db, host, fields['platform'])
+            if self._inherits_platform(db, host_id):
+                fields['platform'] = ''
             device_id = self._insert_device(db, fields, host_id)
-            self._change_device_ips(db, device_id, targets, [])
+            if fields['dhcp']:
+                # Las IPs escritas se reclaman igualmente, pero quedan reservadas: un equipo DHCP no tiene IPs fijas.
+                self._reject_edges(db, targets)
+                for address in targets:
+                    db.execute('INSERT OR IGNORE INTO ips(address, sort_key, claimed_at) VALUES(?,?,?)',
+                               (address, _sort_key(address), now()))
+            else:
+                self._change_device_ips(db, device_id, targets, [])
             return device_id
 
     def update_device(self, device_id, fields, add=(), remove=()):
@@ -460,18 +500,24 @@ class Store:
             if clash:
                 raise Invalid(f'Ya existe un equipo llamado «{fields["name"]}».')
             self._remember(db, 'os_choices', fields['os'])
-            self._remember(db, 'platform_choices', fields['platform'])
-            db.execute('UPDATE devices SET name=?, name_key=?, type=?, os=?, note=?, platform=? WHERE id=?',
-                       (fields['name'], fields['name'].casefold(), fields['type'], fields['os'], fields['note'],
-                        fields['platform'], device_id))
             if fields['type'] == 'fisica':
-                db.execute('UPDATE devices SET host_id=NULL WHERE id=?', (device_id,))
+                host_id = None
             elif has_host:
                 host_id = self._resolve_host(db, host, fields['platform'])
                 if host_id == device_id:
                     raise Invalid('Un equipo no puede correr dentro de sí mismo.')
-                db.execute('UPDATE devices SET host_id=? WHERE id=?', (host_id, device_id))
-            self._change_device_ips(db, device_id, add, remove)
+            else:
+                host_id = db.execute('SELECT host_id FROM devices WHERE id=?', (device_id,)).fetchone()['host_id']
+            if self._inherits_platform(db, host_id):
+                fields['platform'] = ''
+            self._remember(db, 'platform_choices', fields['platform'])
+            db.execute('UPDATE devices SET name=?, name_key=?, type=?, os=?, note=?, platform=?, host_id=?, dhcp=? WHERE id=?',
+                       (fields['name'], fields['name'].casefold(), fields['type'], fields['os'], fields['note'],
+                        fields['platform'], host_id, int(fields['dhcp']), device_id))
+            if fields['dhcp']:
+                db.execute('UPDATE ips SET device_id=NULL WHERE device_id=?', (device_id,))
+            else:
+                self._change_device_ips(db, device_id, add, remove)
 
     def delete_device(self, device_id):
         with self.transaction() as db:
