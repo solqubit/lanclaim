@@ -2,6 +2,7 @@
 import { t, typeLabel } from "./i18n.js";
 import { osIcon } from "./icons.js";
 import { findDeviceByName, osSuggestions } from "./model.js";
+import { osSelect } from "./ossel.js";
 
 const PROPS = new Set(["value", "checked", "selected", "disabled", "hidden", "open"]);
 
@@ -138,8 +139,8 @@ export function deviceInput(state, { placeholder, value = "", onForgetOs } = {})
     { class: "in", "aria-label": t("Tipo") },
     ["vm", "fisica", "contenedor", "otro"].map((k) => el("option", { value: k }, typeLabel(k))),
   );
-  const os = el("input", { class: "in", maxlength: 120, autocomplete: "off", placeholder: t("Sistema operativo (opcional)"), "aria-label": t("Sistema operativo") });
-  const extra = el("div", { class: "new-device", hidden: true }, type, os, osPicker(state, os, onForgetOs));
+  const os = osSelect("", { compact: true });
+  const extra = el("div", { class: "new-device", hidden: true }, type, os.node);
   const hint = el("div", { class: "hint" });
   const sync = () => {
     const name = input.value.trim();
@@ -160,7 +161,7 @@ export function deviceInput(state, { placeholder, value = "", onForgetOs } = {})
       const name = input.value.trim();
       if (!name) return null;
       const existing = findDeviceByName(state, name);
-      return existing ? { id: existing.id } : { name, type: type.value, os: os.value.trim() };
+      return existing ? { id: existing.id } : { name, type: type.value, os: os.read() };
     },
     focus() {
       input.focus();

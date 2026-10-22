@@ -244,3 +244,45 @@ export function osFamily(os) {
   const hit = OS_FAMILIES.find(([, re]) => re.test(text));
   return hit ? hit[0] : null;
 }
+
+// Biblioteca de sistemas para el selector: nombre sin versión y el prefijo que lo reconoce al principio del texto.
+// askName: además de la versión, se escribe el nombre (otra distribución Linux u otro sistema).
+export const OS_LIBRARY = [
+  { key: "windows", name: "Windows", prefix: /^windows\b/i },
+  { key: "ubuntu", name: "Ubuntu", prefix: /^ubuntu\b/i },
+  { key: "debian", name: "Debian", prefix: /^debian\b/i },
+  { key: "rocky", name: "Rocky Linux", prefix: /^rocky(\s+linux)?\b/i },
+  { key: "alma", name: "AlmaLinux", prefix: /^alma\s*linux\b|^alma\b/i },
+  { key: "centos", name: "CentOS", prefix: /^centos\b/i },
+  { key: "redhat", name: "Red Hat", prefix: /^(red\s*hat(\s+enterprise\s+linux)?|rhel)\b/i },
+  { key: "fedora", name: "Fedora", prefix: /^fedora\b/i },
+  { key: "alpine", name: "Alpine Linux", prefix: /^alpine(\s+linux)?\b/i },
+  { key: "arch", name: "Arch Linux", prefix: /^arch(\s+linux)?\b/i },
+  { key: "opensuse", name: "openSUSE", prefix: /^open\s*suse\b/i },
+  { key: "freebsd", name: "FreeBSD", prefix: /^freebsd\b/i },
+  { key: "truenas", name: "TrueNAS", prefix: /^truenas\b/i },
+  { key: "proxmox", name: "Proxmox VE", prefix: /^proxmox(\s+ve)?\b/i },
+  { key: "macos", name: "macOS", prefix: /^mac\s*os(\s+x)?\b/i },
+  { key: "linux", name: "Otro Linux", askName: true },
+  { key: "otro", name: "Otro sistema", askName: true },
+];
+
+// "Ubuntu 24.04" → {key: "ubuntu", name: "", version: "24.04"}. Lo que no empieza por un sistema de la
+// biblioteca queda como nombre libre (otro Linux u otro sistema).
+export function splitOs(os) {
+  const text = String(os || "").trim();
+  if (!text) return { key: "", name: "", version: "" };
+  for (const entry of OS_LIBRARY) {
+    const match = entry.prefix && text.match(entry.prefix);
+    if (match) return { key: entry.key, name: "", version: text.slice(match[0].length).trim() };
+  }
+  return { key: osFamily(text) === "linux" ? "linux" : "otro", name: text, version: "" };
+}
+
+// Lo contrario: lo que se guarda en el equipo.
+export function composeOs(key, name, version) {
+  const entry = OS_LIBRARY.find((o) => o.key === key);
+  if (!entry) return "";
+  const base = entry.askName ? String(name || "").trim() : entry.name;
+  return [base, String(version || "").trim()].filter(Boolean).join(" ");
+}

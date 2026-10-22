@@ -1,9 +1,10 @@
 // Vista Equipos: lista fija (máquinas físicas con sus VMs y VMs por plataforma) y formulario en el panel lateral.
 import { t, typeLabel } from "./i18n.js";
-import { act, forgetOs, goto, isBusy, markDirty, render, state as liveState, ui } from "./main.js";
+import { act, goto, isBusy, markDirty, render, state as liveState, ui } from "./main.js";
 import { deviceIcon, osIcon } from "./icons.js";
 import { byIp, device as deviceById, deviceIps, deviceOf, deviceTree, effectivePlatform, labelUsage, machineForPlatform, machines, networkOf, pingInfo, platformLabels } from "./model.js";
-import { confirmButton, el, osPicker, toast } from "./ui.js";
+import { osSelect } from "./ossel.js";
+import { confirmButton, el, toast } from "./ui.js";
 
 const TYPES = ["vm", "fisica", "contenedor", "otro"];
 const VIRTUAL = new Set(["vm", "contenedor", "otro"]); // corren en una plataforma y, opcionalmente, en una máquina física
@@ -216,10 +217,8 @@ function deviceForm(state, d) {
     { class: "in", "aria-label": t("Tipo"), onchange: markDirty },
     TYPES.map((k) => el("option", { value: k, selected: d ? d.type === k : k === "vm" }, typeLabel(k))),
   );
-  const os = el("input", { class: "in", value: d ? d.os : "", maxlength: 120, autocomplete: "off", placeholder: t("Sistema operativo"), "aria-label": t("Sistema operativo"), oninput: markDirty });
-  const osPreview = el("span", { class: "os-preview" });
-  const syncOs = () => osPreview.replaceChildren(osIcon(os.value, "sm") || "");
-  os.addEventListener("input", syncOs);
+  // Sistema operativo: de la biblioteca, con la versión aparte.
+  const osSel = osSelect(d ? d.os : "", { onDirty: () => osSel.node.setAttribute("data-dirty", "") });
   const note = el("textarea", { class: "in", rows: 2, maxlength: 2000, value: d ? d.note : "", placeholder: t("Nota"), "aria-label": t("Nota"), oninput: markDirty });
 
   // Plataforma de virtualización: para una VM, dónde se virtualiza; para una máquina física, qué ejecuta.
@@ -368,7 +367,7 @@ function deviceForm(state, d) {
     const body = {
       name: name.value,
       type: type.value,
-      os: os.value,
+      os: osSel.read(),
       note: note.value,
       platform: inheritedFrom()?.platform ? "" : platform.value,
       host: VIRTUAL.has(type.value) ? readMachine() : null,
@@ -390,7 +389,6 @@ function deviceForm(state, d) {
   paintIps();
   syncMachine();
   syncType();
-  syncOs();
   syncDhcp();
 
   const remove = d
@@ -412,8 +410,8 @@ function deviceForm(state, d) {
     { class: "dev-form" },
     el("h2", { class: "form-title" }, d ? t("Editar {name}", { name: d.name }) : t("Nuevo equipo")),
     field(t("Nombre"), name),
-    el("div", { class: "two" }, field(t("Tipo"), type), field(t("Sistema operativo"), el("div", { class: "with-ico" }, osPreview, os))),
-    osPicker(state, os, forgetOs),
+    field(t("Tipo"), type),
+    field(t("Sistema operativo"), osSel.node),
     machineBlock,
     platformBlock,
     dhcpBlock,

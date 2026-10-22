@@ -17,6 +17,9 @@ import {
   effectivePlatform,
   labelUsage,
   osFamily,
+  OS_LIBRARY,
+  splitOs,
+  composeOs,
   outsideIps,
   pingInfo,
   suggestIp,
@@ -181,5 +184,31 @@ const families = {
   "macOS Sequoia": "macos", "Linux Mint 22": "linux", "Kali Linux": "linux", "pfSense": null, "": null,
 };
 for (const [os, family] of Object.entries(families)) assert.equal(osFamily(os), family, os);
+
+// The OS library: one entry per system, names without version, plus generic Linux and "other".
+assert.deepEqual(OS_LIBRARY.map((o) => o.key).slice(0, 3), ["windows", "ubuntu", "debian"]);
+assert.ok(OS_LIBRARY.some((o) => o.key === "linux" && o.askName) && OS_LIBRARY.some((o) => o.key === "otro" && o.askName));
+assert.ok(OS_LIBRARY.every((o) => !/\d/.test(o.name)), "library names carry no version");
+// Splitting what is stored ("Ubuntu 24.04") into system + version, and back.
+const split = (os) => JSON.stringify(splitOs(os));
+assert.equal(split("Ubuntu 24.04"), JSON.stringify({ key: "ubuntu", name: "", version: "24.04" }));
+assert.equal(split("Windows Server 2022"), JSON.stringify({ key: "windows", name: "", version: "Server 2022" }));
+assert.equal(split("Rocky Linux 9"), JSON.stringify({ key: "rocky", name: "", version: "9" }));
+assert.equal(split("Centos 9"), JSON.stringify({ key: "centos", name: "", version: "9" }));
+assert.equal(split("RHEL 8"), JSON.stringify({ key: "redhat", name: "", version: "8" }));
+assert.equal(split("Proxmox VE 8"), JSON.stringify({ key: "proxmox", name: "", version: "8" }));
+assert.equal(split("Linux Mint 22"), JSON.stringify({ key: "linux", name: "Linux Mint 22", version: "" }));
+assert.equal(split("pfSense 2.7"), JSON.stringify({ key: "otro", name: "pfSense 2.7", version: "" }));
+assert.equal(split(""), JSON.stringify({ key: "", name: "", version: "" }));
+assert.equal(composeOs("ubuntu", "", " 24.04 "), "Ubuntu 24.04");
+assert.equal(composeOs("windows", "", ""), "Windows");
+assert.equal(composeOs("linux", "Linux Mint", "22"), "Linux Mint 22");
+assert.equal(composeOs("otro", "pfSense", "2.7"), "pfSense 2.7");
+assert.equal(composeOs("", "", "9"), "");
+// Round trip keeps the family.
+for (const os of ["Ubuntu 24.04", "Debian 13", "Windows 10", "AlmaLinux 9", "TrueNAS Scale"]) {
+  const { key, name, version } = splitOs(os);
+  assert.equal(osFamily(composeOs(key, name, version)), osFamily(os), os);
+}
 
 console.log("model: ok");
