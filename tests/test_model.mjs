@@ -13,6 +13,7 @@ import {
   deviceTree,
   hostCandidates,
   hostLabels,
+  resolveHost,
   outsideIps,
   pingInfo,
   suggestIp,
@@ -132,25 +133,39 @@ assert.deepEqual(hostCandidates(hosted, null).length, 6);
 const labelled = {
   networks: [], observations: {},
   ips: [
-    { address: "192.168.1.10", device_id: 1, note: "", claimed_at: "" },
-    { address: "192.168.1.20", device_id: 9, note: "", claimed_at: "" },
+    { address: "192.168.0.237", device_id: 1, note: "", claimed_at: "" },
+    { address: "192.168.0.20", device_id: 9, note: "", claimed_at: "" },
   ],
   devices: [
-    { id: 1, name: "pve", type: "fisica", os: "", note: "", host_id: null, platform: "Proxmox VE" },
-    { id: 2, name: "glpi", type: "vm", os: "", note: "", host_id: 7, platform: "" },
+    { id: 1, name: "Vates Mini PC", type: "fisica", os: "", note: "", host_id: null, platform: "Vates XCP-ng" },
+    { id: 2, name: "Nagios XI", type: "vm", os: "", note: "", host_id: null, platform: "" },
+    { id: 3, name: "pve1", type: "fisica", os: "", note: "", host_id: null, platform: "Proxmox VE" },
+    { id: 4, name: "pve2", type: "fisica", os: "", note: "", host_id: null, platform: "Proxmox VE" },
+    { id: 5, name: "glpi", type: "vm", os: "", note: "", host_id: 4, platform: "" },
     { id: 7, name: "VMware ESXi", type: "fisica", os: "", note: "", host_id: null, platform: "VMware ESXi" },
-    { id: 8, name: "Nutanix AHV", type: "fisica", os: "", note: "", host_id: null, platform: "Nutanix AHV" },
     { id: 9, name: "nas", type: "fisica", os: "", note: "", host_id: null, platform: "" },
   ],
-  platform_choices: ["VMware ESXi", "Mi cluster", "Nutanix AHV", "KVM"],
+  platform_choices: ["Vates XCP-ng", "Mi cluster", "Proxmox VE", "VMware ESXi", "KVM"],
 };
-const labels = hostLabels(labelled, 2).map((l) => `${l.name}:${l.id ?? "-"}:${l.removable ? "x" : "in-use"}`);
-// Hosts first (with guests, IPs or a platform), then saved labels not already a host.
-// In use (guests or IPs) => not removable; an empty host or a plain label => removable.
-assert.deepEqual(labels, ["Nutanix AHV:8:x", "pve:1:in-use", "VMware ESXi:7:in-use", "Mi cluster:-:x", "KVM:-:x"]);
-// A device with IPs but no guests nor platform (nas) is not a host label.
-assert.ok(!hostLabels(labelled, 2).some((l) => l.name === "nas"));
-// The device being edited and the hosts running inside it are never offered.
-assert.ok(!hostLabels(labelled, 7).some((l) => l.name === "VMware ESXi" || l.name === "glpi"));
+const show = (l) => `${l.label}${l.detail ? " (" + l.detail + ")" : ""}=${l.value}:${l.removable ? "x" : "in-use"}`;
+// A machine with a platform is offered by its platform ("the host"), with the machine as detail.
+// Two machines with the same platform keep their names to tell them apart. A label already
+// covered by a machine is not repeated; the rest of the saved labels follow.
+assert.deepEqual(hostLabels(labelled, 2).map(show), [
+  "Proxmox VE (pve1)=pve1:x",
+  "Proxmox VE (pve2)=pve2:in-use",
+  "Vates XCP-ng (Vates Mini PC)=Vates XCP-ng:in-use",
+  "VMware ESXi=VMware ESXi:x",
+  "Mi cluster=Mi cluster:x",
+  "KVM=KVM:x",
+]);
+// Machines with IPs but no guests nor platform (nas) are not hosts; the edited device is never offered.
+assert.ok(!hostLabels(labelled, 2).some((l) => l.value === "nas" || l.value === "Nagios XI"));
+// Typing or picking resolves to the machine: by name, or by a platform only one machine has.
+assert.equal(resolveHost(labelled, 2, "Vates XCP-ng")?.id, 1);
+assert.equal(resolveHost(labelled, 2, "vates mini pc")?.id, 1);
+assert.equal(resolveHost(labelled, 2, "Proxmox VE"), null); // ambiguous: two machines
+assert.equal(resolveHost(labelled, 2, "pve2")?.id, 4);
+assert.equal(resolveHost(labelled, 2, "Mi cluster"), null); // new host
 
 console.log("model: ok");

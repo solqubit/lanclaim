@@ -205,17 +205,49 @@ export function hostCandidates(state, deviceId) {
   return state.devices.filter((d) => !blocked.has(d.id)).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// Etiquetas para el campo Anfitrión: primero los anfitriones (con invitados o plataforma) y luego las
-// etiquetas guardadas que aún no son un equipo. Solo se puede eliminar lo que no está en uso (invitados o IPs).
+// Botones del campo Anfitrión: [{label, detail, value, id, removable}].
+// Una máquina con plataforma se ofrece por su plataforma («Vates XCP-ng»), con la máquina como detalle;
+// si dos máquinas comparten plataforma, el valor es el nombre de cada una para distinguirlas.
+// Después, las etiquetas guardadas que ninguna máquina cubre. Solo se elimina lo que no está en uso.
 export function hostLabels(state, deviceId) {
   const guests = (id) => state.devices.some((d) => d.host_id === id);
   const hasIps = (id) => state.ips.some((ip) => ip.device_id === id);
-  const hosts = hostCandidates(state, deviceId)
-    .filter((d) => d.platform || guests(d.id))
-    .map((d) => ({ name: d.name, id: d.id, removable: !guests(d.id) && !hasIps(d.id) }));
-  const taken = new Set(state.devices.map((d) => d.name.toLowerCase()));
+  const lower = (v) => String(v || "").toLowerCase();
+  const hosts = hostCandidates(state, deviceId).filter((d) => d.platform || guests(d.id));
+  const perPlatform = new Map();
+  for (const d of hosts) if (d.platform) perPlatform.set(lower(d.platform), (perPlatform.get(lower(d.platform)) || 0) + 1);
+  const items = hosts
+    .map((d) => {
+      const sameAsName = lower(d.platform) === lower(d.name);
+      return {
+        label: d.platform || d.name,
+        detail: d.platform && !sameAsName ? d.name : "",
+        value: d.platform && perPlatform.get(lower(d.platform)) === 1 ? d.platform : d.name,
+        id: d.id,
+        removable: !guests(d.id) && !hasIps(d.id),
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label) || a.detail.localeCompare(b.detail));
+  const covered = new Set([...state.devices.map((d) => lower(d.name)), ...hosts.map((d) => lower(d.platform)).filter(Boolean)]);
   const saved = (state.platform_choices || [])
-    .filter((name) => !taken.has(name.toLowerCase()))
-    .map((name) => ({ name, id: null, removable: true }));
-  return [...hosts, ...saved];
+    .filter((name) => !covered.has(lower(name)))
+    .map((name) => ({ label: name, detail: "", value: name, id: null, removable: true }));
+  return [...items, ...saved];
+}
+
+// Lo escrito en Anfitrión: una máquina por su nombre, o por una plataforma que solo tiene una máquina.
+// null si es un anfitrión nuevo o si la plataforma es ambigua (usa ambiguousHost para distinguirlo).
+export function resolveHost(state, deviceId, text) {
+  const q = String(text || "").trim().toLowerCase();
+  if (!q) return null;
+  const candidates = hostCandidates(state, deviceId);
+  const byName = candidates.find((d) => d.name.toLowerCase() === q);
+  if (byName) return byName;
+  const byPlatform = candidates.filter((d) => (d.platform || "").toLowerCase() === q);
+  return byPlatform.length === 1 ? byPlatform[0] : null;
+}
+
+export function ambiguousHost(state, deviceId, text) {
+  const q = String(text || "").trim().toLowerCase();
+  return !!q && !resolveHost(state, deviceId, text) && hostCandidates(state, deviceId).filter((d) => (d.platform || "").toLowerCase() === q).length > 1;
 }

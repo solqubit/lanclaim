@@ -1,7 +1,7 @@
 // Vista Equipos: lista fija agrupada por anfitrión y formulario en el panel lateral.
 import { t, typeLabel } from "./i18n.js";
 import { act, forgetOs, forgetPlatform, goto, isBusy, markDirty, render, state as liveState, ui } from "./main.js";
-import { byIp, device as deviceById, deviceIps, deviceOf, deviceTree, hostCandidates, hostLabels, networkOf, pingInfo } from "./model.js";
+import { ambiguousHost, byIp, device as deviceById, deviceIps, deviceOf, deviceTree, hostCandidates, hostLabels, networkOf, pingInfo, resolveHost } from "./model.js";
 import { choicePicker, confirmButton, el, osPicker, toast } from "./ui.js";
 
 const TYPES = ["vm", "fisica", "contenedor", "otro"];
@@ -220,23 +220,34 @@ function deviceForm(state, d) {
   const os = el("input", { class: "in", value: d ? d.os : "", maxlength: 120, autocomplete: "off", placeholder: t("Sistema operativo"), "aria-label": t("Sistema operativo"), oninput: markDirty });
   const note = el("textarea", { class: "in", rows: 2, maxlength: 2000, value: d ? d.note : "", placeholder: t("Nota"), "aria-label": t("Nota"), oninput: markDirty });
 
-  // Anfitrión: uno existente o un nombre nuevo (se crea con su plataforma).
-  const candidates = hostCandidates(state, d ? d.id : null);
+  // Anfitrión: una máquina (por su plataforma o su nombre) o una etiqueta nueva.
+  const deviceId = d ? d.id : null;
+  const candidates = hostCandidates(state, deviceId);
   const currentHost = d && d.host_id != null ? deviceById(state, d.host_id) : null;
+  const currentValue = currentHost ? hostLabels(state, deviceId).find((l) => l.id === currentHost.id)?.value || currentHost.name : "";
   const hostList = el("datalist", { id: "host-list" }, candidates.map((c) => el("option", { value: c.name }, c.platform || typeLabel(c.type))));
-  const host = el("input", { class: "in", list: "host-list", autocomplete: "off", maxlength: 120, value: currentHost ? currentHost.name : "", placeholder: t("Sin anfitrión: escribe o elige uno"), "aria-label": t("Anfitrión"), oninput: markDirty });
+  const host = el("input", { class: "in", list: "host-list", autocomplete: "off", maxlength: 120, value: currentValue, placeholder: t("Sin anfitrión: escribe o elige uno"), "aria-label": t("Anfitrión"), oninput: markDirty });
   const hostHint = el("div", { class: "hint" });
-  const findHost = () => candidates.find((c) => c.name.toLowerCase() === host.value.trim().toLowerCase());
   const syncHost = () => {
     const value = host.value.trim();
-    hostHint.textContent = value && !findHost() ? t("Se creará el anfitrión “{name}”.", { name: value }) : "";
+    const target = resolveHost(state, deviceId, value);
+    hostHint.textContent = !value
+      ? ""
+      : target
+        ? target.name.toLowerCase() === value.toLowerCase()
+          ? ""
+          : t("Irá dentro de {name}.", { name: target.name })
+        : ambiguousHost(state, deviceId, value)
+          ? t("Varias máquinas usan {name}: elige una en los botones.", { name: value })
+          : t("Se creará el anfitrión “{name}”.", { name: value });
   };
   host.addEventListener("input", syncHost);
   const readHost = () => {
     const value = host.value.trim();
     if (!value) return null;
-    const existing = findHost();
-    return existing ? { id: existing.id } : { name: value };
+    if (ambiguousHost(state, deviceId, value)) return { ambiguous: value };
+    const target = resolveHost(state, deviceId, value);
+    return target ? { id: target.id } : { name: value };
   };
 
   // Plataforma propia, para los equipos que alojan VMs.
@@ -322,13 +333,19 @@ function deviceForm(state, d) {
       return;
     }
     if (!addTyped()) return;
+    const chosenHost = HAS_HOST.has(type.value) ? readHost() : null;
+    if (chosenHost?.ambiguous) {
+      toast(t("Varias máquinas usan {name}: elige una en los botones.", { name: chosenHost.ambiguous }), "error");
+      host.focus();
+      return;
+    }
     const body = {
       name: name.value,
       type: type.value,
       os: os.value,
       note: note.value,
       platform: IS_HOST.has(type.value) ? platform.value : "",
-      host: HAS_HOST.has(type.value) ? readHost() : null,
+      host: chosenHost,
     };
     const add = addresses.filter((a) => !original.includes(a));
     const remove = original.filter((a) => !addresses.includes(a));
@@ -393,7 +410,7 @@ function hostPicker(state, deviceId, input) {
   const box = el("div", { class: "os-picker" });
   const paint = () => {
     const q = input.value.trim().toLowerCase();
-    const shown = labels.filter((l) => l.name.toLowerCase() !== q && l.name.toLowerCase().includes(q));
+    const shown = labels.filter((l) => l.value.toLowerCase() !== q && `${l.label} ${l.detail} ${l.value}`.toLowerCase().includes(q));
     box.replaceChildren(
       ...shown.map((l) =>
         el(
@@ -404,14 +421,15 @@ function hostPicker(state, deviceId, input) {
             {
               type: "button",
               class: "os-pick",
-              title: t("Usar {name}", { name: l.name }),
+              title: l.detail ? t("{label} en {name}", { label: l.label, name: l.detail }) : t("Usar {name}", { name: l.label }),
               onclick: () => {
-                input.value = l.name;
+                input.value = l.value;
                 input.dispatchEvent(new Event("input", { bubbles: true }));
                 input.focus();
               },
             },
-            l.name,
+            l.label,
+            l.detail ? el("span", { class: "os-detail" }, t("en {name}", { name: l.detail })) : null,
           ),
           l.removable &&
             el(
@@ -420,7 +438,7 @@ function hostPicker(state, deviceId, input) {
                 type: "button",
                 class: "x",
                 title: t("Eliminar etiqueta"),
-                "aria-label": t("Eliminar {name}", { name: l.name }),
+                "aria-label": t("Eliminar {name}", { name: l.label }),
                 onclick: () => {
                   labels = labels.filter((x) => x !== l);
                   paint();
@@ -441,11 +459,11 @@ function hostPicker(state, deviceId, input) {
 async function removeHostLabel(label) {
   let ok = true;
   if (label.id != null) ok = await act("devices/delete", { id: label.id }, null, { quiet: true });
-  if (ok && liveState.platform_choices.some((p) => p.toLowerCase() === label.name.toLowerCase())) {
-    ok = await act("platforms/forget", { name: label.name }, null, { quiet: true });
+  if (ok && label.id == null && liveState.platform_choices.some((p) => p.toLowerCase() === label.label.toLowerCase())) {
+    ok = await act("platforms/forget", { name: label.label }, null, { quiet: true });
   }
   if (ok) {
-    toast(t("«{name}» eliminado de tus anfitriones", { name: label.name }));
+    toast(t("«{name}» eliminado de tus anfitriones", { name: label.detail || label.label }));
     render({ soft: true }); // la lista se actualiza; el formulario a medias se respeta
   }
 }
