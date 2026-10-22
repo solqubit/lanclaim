@@ -1,7 +1,7 @@
 // Vista Equipos: lista fija agrupada por anfitrión y formulario en el panel lateral.
 import { t, typeLabel } from "./i18n.js";
 import { act, forgetOs, forgetPlatform, goto, isBusy, markDirty, render, state as liveState, ui } from "./main.js";
-import { byIp, device as deviceById, deviceIps, deviceOf, deviceTree, hostCandidates, networkOf, pingInfo } from "./model.js";
+import { byIp, device as deviceById, deviceIps, deviceOf, deviceTree, hostCandidates, hostLabels, networkOf, pingInfo } from "./model.js";
 import { choicePicker, confirmButton, el, osPicker, toast } from "./ui.js";
 
 const TYPES = ["vm", "fisica", "contenedor", "otro"];
@@ -225,9 +225,6 @@ function deviceForm(state, d) {
   const currentHost = d && d.host_id != null ? deviceById(state, d.host_id) : null;
   const hostList = el("datalist", { id: "host-list" }, candidates.map((c) => el("option", { value: c.name }, c.platform || typeLabel(c.type))));
   const host = el("input", { class: "in", list: "host-list", autocomplete: "off", maxlength: 120, value: currentHost ? currentHost.name : "", placeholder: t("Sin anfitrión: escribe o elige uno"), "aria-label": t("Anfitrión"), oninput: markDirty });
-  // Un solo campo: botones con tus anfitriones y con las plataformas habituales («VMware ESXi», «Local host»…).
-  const hostNames = candidates.filter((c) => c.platform || state.devices.some((x) => x.host_id === c.id)).map((c) => c.name);
-  const hostChoices = [...hostNames, ...state.platform_choices.filter((p) => !hostNames.some((n) => n.toLowerCase() === p.toLowerCase()))];
   const hostHint = el("div", { class: "hint" });
   const findHost = () => candidates.find((c) => c.name.toLowerCase() === host.value.trim().toLowerCase());
   const syncHost = () => {
@@ -244,7 +241,7 @@ function deviceForm(state, d) {
 
   // Plataforma propia, para los equipos que alojan VMs.
   const platform = el("input", { class: "in", maxlength: 60, autocomplete: "off", value: d ? d.platform : "", placeholder: t("Plataforma, p. ej. Proxmox VE"), "aria-label": t("Plataforma"), oninput: markDirty });
-  const hostBlock = field(t("Anfitrión"), host, hostList, hostHint, choicePicker(hostChoices, host, null));
+  const hostBlock = field(t("Anfitrión"), host, hostList, hostHint, hostPicker(state, d ? d.id : null, host));
   const platformBlock = field(t("Plataforma de virtualización (opcional)"), platform, choicePicker(state.platform_choices, platform, forgetPlatform));
   const syncType = () => {
     hostBlock.hidden = !HAS_HOST.has(type.value);
@@ -387,6 +384,70 @@ function deviceForm(state, d) {
       remove,
     ),
   );
+}
+
+// Botones con tus etiquetas de anfitrión. Las que no están en uso llevan × y se eliminan del todo
+// (la etiqueta guardada y, si existe, el anfitrión vacío con ese nombre).
+function hostPicker(state, deviceId, input) {
+  let labels = hostLabels(state, deviceId);
+  const box = el("div", { class: "os-picker" });
+  const paint = () => {
+    const q = input.value.trim().toLowerCase();
+    const shown = labels.filter((l) => l.name.toLowerCase() !== q && l.name.toLowerCase().includes(q));
+    box.replaceChildren(
+      ...shown.map((l) =>
+        el(
+          "span",
+          { class: "os-chip" + (l.removable ? "" : " in-use"), title: l.removable ? null : t("En uso: tiene equipos dentro o IPs, no se puede eliminar") },
+          el(
+            "button",
+            {
+              type: "button",
+              class: "os-pick",
+              title: t("Usar {name}", { name: l.name }),
+              onclick: () => {
+                input.value = l.name;
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.focus();
+              },
+            },
+            l.name,
+          ),
+          l.removable &&
+            el(
+              "button",
+              {
+                type: "button",
+                class: "x",
+                title: t("Eliminar etiqueta"),
+                "aria-label": t("Eliminar {name}", { name: l.name }),
+                onclick: () => {
+                  labels = labels.filter((x) => x !== l);
+                  paint();
+                  removeHostLabel(l);
+                },
+              },
+              "×",
+            ),
+        ),
+      ),
+    );
+  };
+  input.addEventListener("input", paint);
+  paint();
+  return box;
+}
+
+async function removeHostLabel(label) {
+  let ok = true;
+  if (label.id != null) ok = await act("devices/delete", { id: label.id }, null, { quiet: true });
+  if (ok && liveState.platform_choices.some((p) => p.toLowerCase() === label.name.toLowerCase())) {
+    ok = await act("platforms/forget", { name: label.name }, null, { quiet: true });
+  }
+  if (ok) {
+    toast(t("«{name}» eliminado de tus anfitriones", { name: label.name }));
+    render({ soft: true }); // la lista se actualiza; el formulario a medias se respeta
+  }
 }
 
 // Desplegable de mis IPs reservadas, agrupadas por red.

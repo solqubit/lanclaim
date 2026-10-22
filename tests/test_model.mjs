@@ -12,6 +12,7 @@ import {
   osSuggestions,
   deviceTree,
   hostCandidates,
+  hostLabels,
   outsideIps,
   pingInfo,
   suggestIp,
@@ -127,5 +128,29 @@ assert.deepEqual(flat, ["0:pve:2", "1:glpi:0", "1:nested:1", "2:inner:0", "0:alo
 assert.deepEqual(deviceTree(hosted, (d) => d.name === "inner").map((n) => n.device.name), ["pve", "nested", "inner"]);
 assert.deepEqual(hostCandidates(hosted, 3).map((d) => d.name), ["alone", "glpi", "nas", "pve"]);
 assert.deepEqual(hostCandidates(hosted, null).length, 6);
+
+const labelled = {
+  networks: [], observations: {},
+  ips: [
+    { address: "192.168.1.10", device_id: 1, note: "", claimed_at: "" },
+    { address: "192.168.1.20", device_id: 9, note: "", claimed_at: "" },
+  ],
+  devices: [
+    { id: 1, name: "pve", type: "fisica", os: "", note: "", host_id: null, platform: "Proxmox VE" },
+    { id: 2, name: "glpi", type: "vm", os: "", note: "", host_id: 7, platform: "" },
+    { id: 7, name: "VMware ESXi", type: "fisica", os: "", note: "", host_id: null, platform: "VMware ESXi" },
+    { id: 8, name: "Nutanix AHV", type: "fisica", os: "", note: "", host_id: null, platform: "Nutanix AHV" },
+    { id: 9, name: "nas", type: "fisica", os: "", note: "", host_id: null, platform: "" },
+  ],
+  platform_choices: ["VMware ESXi", "Mi cluster", "Nutanix AHV", "KVM"],
+};
+const labels = hostLabels(labelled, 2).map((l) => `${l.name}:${l.id ?? "-"}:${l.removable ? "x" : "in-use"}`);
+// Hosts first (with guests, IPs or a platform), then saved labels not already a host.
+// In use (guests or IPs) => not removable; an empty host or a plain label => removable.
+assert.deepEqual(labels, ["Nutanix AHV:8:x", "pve:1:in-use", "VMware ESXi:7:in-use", "Mi cluster:-:x", "KVM:-:x"]);
+// A device with IPs but no guests nor platform (nas) is not a host label.
+assert.ok(!hostLabels(labelled, 2).some((l) => l.name === "nas"));
+// The device being edited and the hosts running inside it are never offered.
+assert.ok(!hostLabels(labelled, 7).some((l) => l.name === "VMware ESXi" || l.name === "glpi"));
 
 console.log("model: ok");

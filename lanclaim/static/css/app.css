@@ -152,6 +152,8 @@ button.ipc:hover { border-color: var(--link); }
 .os-pick:hover { color: var(--resv); }
 .os-chip .x { border: 0; background: none; color: var(--mute); padding: 2px 9px 2px 3px; font-size: 14px; line-height: 1; }
 .os-chip .x:hover { color: var(--fault); }
+.os-chip.in-use .os-pick { padding-right: 11px; }
+.os-chip.in-use { border-style: solid; border-color: #2c4f80; }
 
 /* ---------- Barra de redes ---------- */
 .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }

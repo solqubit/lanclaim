@@ -392,9 +392,10 @@ class Store:
             row = db.execute('SELECT id FROM devices WHERE name_key=?', (name.casefold(),)).fetchone()
             platform = host.get('platform')
             if not platform:
-                # Un anfitrión llamado como una plataforma conocida («VMware ESXi») la recibe sin volver a escribirla.
+                # El nombre es la etiqueta del anfitrión («VMware ESXi», «Mi cluster»): se usa como plataforma y
+                # queda guardado para reutilizarlo; si coincide con una conocida, se respeta su escritura.
                 known = db.execute('SELECT name FROM platform_choices WHERE name_key=?', (name.casefold(),)).fetchone()
-                platform = known['name'] if known else ''
+                platform = known['name'] if known else name[:60]
             host_id = row['id'] if row else self._insert_device(
                 db, _device_fields({'name': name, 'type': 'fisica', 'platform': platform}))
         # Sin ciclos: el anfitrión no puede ser el propio equipo ni algo que corre dentro de él.

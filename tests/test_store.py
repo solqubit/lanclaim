@@ -107,9 +107,10 @@ class StoreTests(unittest.TestCase):
         self.store.create_device({'name': 'glpi', 'type': 'vm', 'host': {'name': 'vmware esxi'}})
         host = self.device_named('vmware esxi')
         self.assertEqual(host['platform'], 'VMware ESXi')
-        # A name that is not a known platform simply has none.
-        self.store.create_device({'name': 'pihole', 'type': 'contenedor', 'host': {'name': 'rack-2'}})
-        self.assertEqual(self.device_named('rack-2')['platform'], '')
+        # Any other name is the user's own label: it is saved so it can be reused (and removed) later.
+        self.store.create_device({'name': 'pihole', 'type': 'contenedor', 'host': {'name': 'Mi cluster'}})
+        self.assertEqual(self.device_named('Mi cluster')['platform'], 'Mi cluster')
+        self.assertEqual(self.store.state()['platform_choices'][0], 'Mi cluster')
 
     def test_update_without_host_key_keeps_host(self):
         vm = self.store.create_device({'name': 'glpi', 'type': 'vm', 'host': {'name': 'pve'}})

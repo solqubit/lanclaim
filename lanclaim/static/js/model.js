@@ -204,3 +204,18 @@ export function hostCandidates(state, deviceId) {
   }
   return state.devices.filter((d) => !blocked.has(d.id)).sort((a, b) => a.name.localeCompare(b.name));
 }
+
+// Etiquetas para el campo Anfitrión: primero los anfitriones (con invitados o plataforma) y luego las
+// etiquetas guardadas que aún no son un equipo. Solo se puede eliminar lo que no está en uso (invitados o IPs).
+export function hostLabels(state, deviceId) {
+  const guests = (id) => state.devices.some((d) => d.host_id === id);
+  const hasIps = (id) => state.ips.some((ip) => ip.device_id === id);
+  const hosts = hostCandidates(state, deviceId)
+    .filter((d) => d.platform || guests(d.id))
+    .map((d) => ({ name: d.name, id: d.id, removable: !guests(d.id) && !hasIps(d.id) }));
+  const taken = new Set(state.devices.map((d) => d.name.toLowerCase()));
+  const saved = (state.platform_choices || [])
+    .filter((name) => !taken.has(name.toLowerCase()))
+    .map((name) => ({ name, id: null, removable: true }));
+  return [...hosts, ...saved];
+}

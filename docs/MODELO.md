@@ -10,7 +10,7 @@ SQLite, esquema `user_version = 7`, en `lanclaim/db.py`. Al arrancar con una bas
 | `devices` | `id`, `name`, `type`, `os`, `note`, `host_id`, `platform`, `created_at` | `name` es obligatorio y único sin distinguir mayúsculas. `type` puede ser `vm`, `fisica`, `contenedor` u `otro`. `host_id` es el equipo anfitrión donde corre (sin ciclos; al borrar el anfitrión pasa a nulo). `platform` es la plataforma de virtualización de un anfitrión. |
 | `ips` | `id`, `address`, `device_id`, `note`, `claimed_at` | Una fila por IP reclamada. Si `device_id` es nulo, la IP está reservada. Al borrar el equipo, `device_id` pasa a nulo. |
 | `os_choices` | `name`, `name_key`, `used_at` | SO ya usados, sin repetir mayúsculas/minúsculas. Se añaden al crear o editar un equipo y sobreviven aunque se borre el equipo. Se muestran como botones, el más reciente primero; × los quita de la lista. |
-| `platform_choices` | `name`, `name_key`, `used_at` | Plataformas ya usadas, más las habituales de serie (Proxmox VE, VMware ESXi, Vates XCP-ng, Nutanix AHV, Hyper-V, KVM, Local host). × las quita de la lista. |
+| `platform_choices` | `name`, `name_key`, `used_at` | Etiquetas de anfitrión y plataformas guardadas (de serie: Proxmox VE, VMware ESXi, Vates XCP-ng, Nutanix AHV, Hyper-V, KVM, Local host). Un anfitrión nuevo escrito en el campo Anfitrión guarda su nombre como etiqueta. En el formulario, × elimina una etiqueta (y el anfitrión vacío con ese nombre) solo si no tiene equipos dentro ni IPs. |
 | `observations` | `address`, `up`, `checked_at`, `last_up_at` | Último ping de cada dirección vigilada. `last_up_at` guarda la última vez que respondió. |
 
 ## Estados de una dirección (derivados)
