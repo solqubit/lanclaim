@@ -67,6 +67,7 @@ export function osPicker(state, input, onForget) {
   return choicePicker(state.os_choices, input, onForget);
 }
 
+// onForget nulo: botones sin × (p. ej. anfitriones existentes, que no se «olvidan»).
 export function choicePicker(saved, input, onForget) {
   const box = el("div", { class: "os-picker" });
   let choices = [...(saved || [])];
@@ -91,6 +92,7 @@ export function choicePicker(saved, input, onForget) {
             },
             name,
           ),
+          onForget &&
           el(
             "button",
             {

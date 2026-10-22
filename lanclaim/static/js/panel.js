@@ -88,7 +88,7 @@ function hostLine(state, d) {
     t("Corre en"),
     " ",
     el("button", { type: "button", class: "link", onclick: () => editDevice(host.id) }, host.name),
-    host.platform ? el("span", { class: "platform" }, host.platform) : null,
+    host.platform && host.platform.toLowerCase() !== host.name.toLowerCase() ? el("span", { class: "platform" }, host.platform) : null,
   );
 }
 

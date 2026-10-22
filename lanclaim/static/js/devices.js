@@ -122,7 +122,7 @@ function deviceRow(state, { device: d, depth, guests }) {
     el(
       "div",
       { class: "dev-side" },
-      d.platform ? el("span", { class: "platform" }, d.platform) : null,
+      d.platform && d.platform.toLowerCase() !== d.name.toLowerCase() ? el("span", { class: "platform" }, d.platform) : null,
       guests ? el("span", { class: "guests" }, guests === 1 ? t("1 equipo dentro") : t("{n} equipos dentro", { n: guests })) : null,
       el(
         "div",
@@ -225,32 +225,27 @@ function deviceForm(state, d) {
   const currentHost = d && d.host_id != null ? deviceById(state, d.host_id) : null;
   const hostList = el("datalist", { id: "host-list" }, candidates.map((c) => el("option", { value: c.name }, c.platform || typeLabel(c.type))));
   const host = el("input", { class: "in", list: "host-list", autocomplete: "off", maxlength: 120, value: currentHost ? currentHost.name : "", placeholder: t("Sin anfitrión: escribe o elige uno"), "aria-label": t("Anfitrión"), oninput: markDirty });
-  const hostPlatform = el("input", { class: "in", maxlength: 60, autocomplete: "off", placeholder: t("Plataforma, p. ej. Proxmox VE"), "aria-label": t("Plataforma del anfitrión nuevo") });
+  // Un solo campo: botones con tus anfitriones y con las plataformas habituales («VMware ESXi», «Local host»…).
+  const hostNames = candidates.filter((c) => c.platform || state.devices.some((x) => x.host_id === c.id)).map((c) => c.name);
+  const hostChoices = [...hostNames, ...state.platform_choices.filter((p) => !hostNames.some((n) => n.toLowerCase() === p.toLowerCase()))];
   const hostHint = el("div", { class: "hint" });
-  const hostNew = el("div", { class: "new-device", hidden: true }, hostHint, hostPlatform, choicePicker(state.platform_choices, hostPlatform, forgetPlatform));
   const findHost = () => candidates.find((c) => c.name.toLowerCase() === host.value.trim().toLowerCase());
   const syncHost = () => {
     const value = host.value.trim();
-    const existing = findHost();
-    hostNew.hidden = !value || !!existing;
-    hostHint.textContent = existing
-      ? ""
-      : value
-        ? t("Se creará el anfitrión “{name}”. ¿Con qué plataforma?", { name: value })
-        : "";
+    hostHint.textContent = value && !findHost() ? t("Se creará el anfitrión “{name}”.", { name: value }) : "";
   };
   host.addEventListener("input", syncHost);
   const readHost = () => {
     const value = host.value.trim();
     if (!value) return null;
     const existing = findHost();
-    return existing ? { id: existing.id } : { name: value, platform: hostPlatform.value.trim() };
+    return existing ? { id: existing.id } : { name: value };
   };
 
   // Plataforma propia, para los equipos que alojan VMs.
   const platform = el("input", { class: "in", maxlength: 60, autocomplete: "off", value: d ? d.platform : "", placeholder: t("Plataforma, p. ej. Proxmox VE"), "aria-label": t("Plataforma"), oninput: markDirty });
-  const hostBlock = field(t("Anfitrión"), host, hostList, hostNew);
-  const platformBlock = field(t("Plataforma de virtualización"), platform, choicePicker(state.platform_choices, platform, forgetPlatform));
+  const hostBlock = field(t("Anfitrión"), host, hostList, hostHint, choicePicker(hostChoices, host, null));
+  const platformBlock = field(t("Plataforma de virtualización (opcional)"), platform, choicePicker(state.platform_choices, platform, forgetPlatform));
   const syncType = () => {
     hostBlock.hidden = !HAS_HOST.has(type.value);
     platformBlock.hidden = !IS_HOST.has(type.value);
