@@ -41,9 +41,11 @@ class StoreTests(unittest.TestCase):
         db.executescript("CREATE TABLE ips(x); CREATE TABLE machines(y); INSERT INTO ips VALUES (1); PRAGMA user_version=4;")
         db.close()
         store = Store(old)
-        self.assertEqual(store.state(), {'networks': [], 'ips': [], 'devices': [], 'observations': {}, 'os_choices': []})
+        state = store.state()
+        self.assertEqual({k: state[k] for k in ('networks', 'ips', 'devices', 'observations', 'os_choices')},
+                         {'networks': [], 'ips': [], 'devices': [], 'observations': {}, 'os_choices': []})
         db = sqlite3.connect(old)
-        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
+        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 7)
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         db.close()
         self.assertNotIn('machines', tables)
@@ -61,6 +63,79 @@ class StoreTests(unittest.TestCase):
         self.assertEqual([d['name'] for d in state['devices']], ['glpi', 'nas'])
         self.assertEqual(state['ips'][0]['device_id'], 1)
         self.assertEqual(state['os_choices'], ['Debian 12'])
+        self.assertEqual([(d['host_id'], d['platform']) for d in state['devices']], [(None, ''), (None, '')])
+
+    def test_schema_6_upgrade_keeps_data_and_adds_hosts(self):
+        old = Path(self.temp.name) / 'v6.sqlite3'
+        db = sqlite3.connect(old)
+        db.executescript(V5_SCHEMA + """
+            CREATE TABLE os_choices (name TEXT NOT NULL, name_key TEXT PRIMARY KEY, used_at TEXT NOT NULL);
+            INSERT INTO devices(name, name_key, type, os, note, created_at) VALUES('glpi','glpi','vm','Debian 13','','t');
+            INSERT INTO ips(address, sort_key, device_id, note, claimed_at) VALUES('192.168.1.20', 3232235796, 1, 'nota', 't');
+            INSERT INTO os_choices VALUES('Debian 13', 'debian 13', 't');
+            PRAGMA user_version=6;""")
+        db.close()
+        store = Store(old)
+        state = store.state()
+        self.assertEqual(state['devices'][0]['name'], 'glpi')
+        self.assertEqual(state['ips'][0]['note'], 'nota')
+        self.assertEqual(state['os_choices'], ['Debian 13'])
+        self.assertIn('Proxmox VE', state['platform_choices'])
+        store.update_device(1, {'name': 'glpi', 'type': 'vm', 'host': {'name': 'proxmox-01', 'platform': 'Proxmox VE'}})
+        self.assertEqual(self.find(store, 'glpi')['host_id'], self.find(store, 'proxmox-01')['id'])
+
+    def find(self, store, name):
+        return next(d for d in store.state()['devices'] if d['name'] == name)
+
+    def test_host_by_name_is_created_with_platform(self):
+        vm = self.store.create_device({'name': 'glpi', 'type': 'vm', 'host': {'name': 'cluster-vmware', 'platform': 'VMware ESXi'}})
+        host = self.device_named('cluster-vmware')
+        self.assertEqual((host['type'], host['platform']), ('fisica', 'VMware ESXi'))
+        self.assertEqual(self.device_named('glpi')['host_id'], host['id'])
+        # Reusing the host by name (any case) neither duplicates it nor changes its platform.
+        self.store.create_device({'name': 'jellyfin', 'type': 'vm', 'host': {'name': 'CLUSTER-VMWARE', 'platform': 'Hyper-V'}})
+        self.assertEqual(len(self.store.state()['devices']), 3)
+        self.assertEqual(self.device_named('cluster-vmware')['platform'], 'VMware ESXi')
+        self.assertEqual(self.store.state()['platform_choices'][0], 'VMware ESXi')
+        # By id, and cleared with None.
+        self.store.update_device(vm, {'name': 'glpi', 'type': 'vm', 'host': {'id': host['id']}})
+        self.store.update_device(vm, {'name': 'glpi', 'type': 'vm', 'host': None})
+        self.assertIsNone(self.device_named('glpi')['host_id'])
+
+    def test_update_without_host_key_keeps_host(self):
+        vm = self.store.create_device({'name': 'glpi', 'type': 'vm', 'host': {'name': 'pve'}})
+        self.store.update_device(vm, {'name': 'glpi', 'type': 'vm', 'os': 'Debian 13'})
+        self.assertEqual(self.device_named('glpi')['host_id'], self.device_named('pve')['id'])
+
+    def test_host_cycles_are_rejected(self):
+        pve = self.store.create_device({'name': 'pve', 'type': 'fisica', 'platform': 'Proxmox VE'})
+        vm = self.store.create_device({'name': 'nested', 'type': 'vm', 'host': {'id': pve}})
+        inner = self.store.create_device({'name': 'inner', 'type': 'vm', 'host': {'id': vm}})
+        for device_id, name, host in ((pve, 'pve', pve), (pve, 'pve', inner), (vm, 'nested', inner)):
+            with self.subTest(device=name, host=host), self.assertRaises(Invalid):
+                self.store.update_device(device_id, {'name': name, 'type': 'vm', 'host': {'id': host}})
+        with self.assertRaises(Invalid):
+            self.store.create_device({'name': 'x', 'type': 'vm', 'host': {'id': 999}})
+
+    def test_deleting_host_keeps_its_guests(self):
+        pve = self.store.create_device({'name': 'pve', 'type': 'fisica'}, ['192.168.1.10'])
+        self.store.create_device({'name': 'glpi', 'type': 'vm', 'host': {'id': pve}}, ['192.168.1.20'])
+        self.store.delete_device(pve)
+        glpi = self.device_named('glpi')
+        self.assertIsNone(glpi['host_id'])
+        self.assertEqual(self.ip('192.168.1.20')['device_id'], glpi['id'])
+
+    def test_platform_choices_remembered_and_forgotten(self):
+        self.store.create_device({'name': 'xcp', 'type': 'fisica', 'platform': 'Vates XCP-ng'})
+        self.store.create_device({'name': 'mine', 'type': 'fisica', 'platform': 'Mi plataforma'})
+        choices = self.store.state()['platform_choices']
+        self.assertEqual(choices[:2], ['Mi plataforma', 'Vates XCP-ng'])
+        for default in ('Proxmox VE', 'VMware ESXi', 'Nutanix AHV', 'Hyper-V', 'Local host'):
+            self.assertIn(default, choices)
+        self.store.forget_platform('mi plataforma')
+        self.assertNotIn('Mi plataforma', self.store.state()['platform_choices'])
+        with self.assertRaises(Invalid):
+            self.store.create_device({'name': 'y', 'type': 'fisica', 'platform': 'p' * 61})
 
     def test_os_choices_are_remembered(self):
         glpi = self.store.create_device({'name': 'glpi', 'type': 'vm', 'os': 'Debian 12'})

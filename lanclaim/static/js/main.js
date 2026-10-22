@@ -97,9 +97,13 @@ export function act(path, body, okMessage, { quiet = false } = {}) {
   return result;
 }
 
-// Quitar un SO de la lista guardada sin repintar (el formulario abierto sigue igual).
+// Quitar un SO o una plataforma de la lista guardada sin repintar (el formulario abierto sigue igual).
 export function forgetOs(name) {
   return act("os/forget", { name }, t("«{name}» quitado de la lista", { name }), { quiet: true });
+}
+
+export function forgetPlatform(name) {
+  return act("platforms/forget", { name }, t("«{name}» quitado de la lista", { name }), { quiet: true });
 }
 
 export function goto(address) {
@@ -126,12 +130,12 @@ export function editDevice(id, address = null) {
   ui.editDev = id;
   ui.newDevAddress = address;
   render();
-  document.querySelector(".card.form input")?.focus();
+  document.querySelector("#dev-panel input")?.focus();
 }
 
-// Hash: #red/192.168.1.0-24/192.168.1.43 · #red/otras · #equipos
+// Hash: #red/192.168.1.0-24/192.168.1.43 · #red/otras · #equipos · #equipos/12
 function writeHash() {
-  let hash = "#equipos";
+  let hash = typeof ui.editDev === "number" ? `#equipos/${ui.editDev}` : "#equipos";
   if (ui.view === "red") {
     const net = ui.net === "outside" ? "otras" : ui.net ? ui.net.replace("/", "-") : "";
     const one = ui.sel.size === 1 ? [...ui.sel][0] : "";
@@ -143,6 +147,10 @@ function writeHash() {
 function readHash() {
   const [view, net, address] = location.hash.replace(/^#/, "").split("/");
   ui.view = view === "equipos" ? "equipos" : "red";
+  if (ui.view === "equipos") {
+    ui.editDev = /^\d+$/.test(net || "") ? Number(net) : null;
+    return;
+  }
   if (net) ui.net = net === "otras" ? "outside" : net.replace("-", "/");
   ui.sel = new Set(address && /^\d{1,3}(\.\d{1,3}){3}$/.test(address) ? [address] : []);
   ui.anchor = address || null;
@@ -216,7 +224,7 @@ function boot() {
         document.activeElement.blur();
       }
       // Un formulario con cambios sin guardar no se descarta con Escape: hay que pulsar Cancelar.
-      if (root().querySelector(".card.form [data-dirty], #net-form [data-dirty]")) {
+      if (root().querySelector(".dev-form [data-dirty], #net-form [data-dirty]")) {
         toast(t("Tienes cambios sin guardar. Pulsa Cancelar para descartarlos."));
         return;
       }

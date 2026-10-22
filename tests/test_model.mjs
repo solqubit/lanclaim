@@ -10,6 +10,8 @@ import {
   networkHosts,
   networkOf,
   osSuggestions,
+  deviceTree,
+  hostCandidates,
   outsideIps,
   pingInfo,
   suggestIp,
@@ -106,5 +108,24 @@ assert.deepEqual(osSuggestions(choices, "deb"), ["Debian 12", "Debian 13"]);
 assert.deepEqual(osSuggestions(choices, " DEBIAN 12 "), []); // already chosen
 assert.deepEqual(osSuggestions(choices, "", 2), ["Ubuntu 24.04", "Debian 12"]);
 assert.deepEqual(osSuggestions(undefined, "x"), []);
+
+const hosted = {
+  networks: [], ips: [], observations: {},
+  devices: [
+    { id: 1, name: "pve", type: "fisica", os: "", note: "", host_id: null, platform: "Proxmox VE" },
+    { id: 2, name: "glpi", type: "vm", os: "", note: "", host_id: 1, platform: "" },
+    { id: 3, name: "nested", type: "vm", os: "", note: "", host_id: 1, platform: "" },
+    { id: 4, name: "inner", type: "vm", os: "", note: "", host_id: 3, platform: "" },
+    { id: 5, name: "nas", type: "fisica", os: "", note: "", host_id: null, platform: "" },
+    { id: 6, name: "alone", type: "vm", os: "", note: "", host_id: 99, platform: "" },
+  ],
+};
+const flat = deviceTree(hosted, () => true).map((n) => `${n.depth}:${n.device.name}:${n.guests}`);
+// Hosts first (pve has guests), then the rest by name; guests nested under their host; a missing host counts as no host.
+assert.deepEqual(flat, ["0:pve:2", "1:glpi:0", "1:nested:1", "2:inner:0", "0:alone:0", "0:nas:0"]);
+// A match deep in the tree keeps its ancestors visible.
+assert.deepEqual(deviceTree(hosted, (d) => d.name === "inner").map((n) => n.device.name), ["pve", "nested", "inner"]);
+assert.deepEqual(hostCandidates(hosted, 3).map((d) => d.name), ["alone", "glpi", "nas", "pve"]);
+assert.deepEqual(hostCandidates(hosted, null).length, 6);
 
 console.log("model: ok");

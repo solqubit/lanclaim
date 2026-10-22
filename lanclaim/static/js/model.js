@@ -149,3 +149,58 @@ export function osSuggestions(choices, typed, limit = 8) {
   const list = (choices || []).filter((name) => name.toLowerCase() !== q && name.toLowerCase().includes(q));
   return list.slice(0, limit);
 }
+
+// Árbol de equipos por anfitrión: [{device, depth, guests}] en orden de pintado.
+// Arriba los anfitriones con invitados, luego el resto, por nombre; un anfitrión inexistente cuenta como ninguno.
+export function deviceTree(state, keep = () => true) {
+  const ids = new Set(state.devices.map((d) => d.id));
+  const children = new Map();
+  for (const d of state.devices) {
+    const parent = ids.has(d.host_id) ? d.host_id : null;
+    if (!children.has(parent)) children.set(parent, []);
+    children.get(parent).push(d);
+  }
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  const visible = new Map();
+  const isVisible = (d, seen = new Set()) => {
+    if (visible.has(d.id)) return visible.get(d.id);
+    if (seen.has(d.id)) return false;
+    seen.add(d.id);
+    const result = keep(d) || (children.get(d.id) || []).some((c) => isVisible(c, seen));
+    visible.set(d.id, result);
+    return result;
+  };
+  const out = [];
+  const walk = (list, depth, seen) => {
+    for (const d of list) {
+      if (seen.has(d.id) || !isVisible(d)) continue;
+      seen.add(d.id);
+      const kids = (children.get(d.id) || []).slice().sort(byName);
+      out.push({ device: d, depth, guests: kids.length });
+      walk(kids, depth + 1, seen);
+    }
+  };
+  const roots = (children.get(null) || []).slice().sort((a, b) => {
+    const ga = (children.get(a.id) || []).length ? 0 : 1;
+    const gb = (children.get(b.id) || []).length ? 0 : 1;
+    return ga - gb || byName(a, b);
+  });
+  walk(roots, 0, new Set());
+  return out;
+}
+
+// Equipos que pueden ser anfitrión de deviceId: todos menos él mismo y lo que corre dentro de él.
+export function hostCandidates(state, deviceId) {
+  const blocked = new Set(deviceId == null ? [] : [deviceId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const d of state.devices) {
+      if (!blocked.has(d.id) && blocked.has(d.host_id) && deviceId != null) {
+        blocked.add(d.id);
+        grew = true;
+      }
+    }
+  }
+  return state.devices.filter((d) => !blocked.has(d.id)).sort((a, b) => a.name.localeCompare(b.name));
+}

@@ -14,7 +14,7 @@ function panelSig(state, ui) {
     const d = deviceOf(state, a);
     const p = pingInfo(state, a, now);
     const checked = state.observations[a]?.checked_at;
-    return [a, ipStatus(state, a), ip?.note, d && [d.id, d.name, d.type, d.os], p.up, p.recent, agoText(p.lastUpAgoMin ?? 0), checked && agoText(minutesSince(checked))];
+    return [a, ipStatus(state, a), ip?.note, d && [d.id, d.name, d.type, d.os, d.host_id], p.up, p.recent, agoText(p.lastUpAgoMin ?? 0), checked && agoText(minutesSince(checked))];
   });
   const reserved = ui.sel.size ? 0 : state.ips.filter((ip) => ip.device_id == null).map((ip) => ip.address + ip.note).join();
   return JSON.stringify([ui.net, rows, reserved, state.devices.length]);
@@ -76,6 +76,20 @@ async function copy(text) {
     area.remove();
   }
   toast(t("{ip} copiada", { ip: text }));
+}
+
+// «Corre en proxmox-01 (Proxmox VE)», con enlace al anfitrión.
+function hostLine(state, d) {
+  const host = d.host_id != null ? state.devices.find((x) => x.id === d.host_id) : null;
+  if (!host) return null;
+  return el(
+    "div",
+    { class: "host-line" },
+    t("Corre en"),
+    " ",
+    el("button", { type: "button", class: "link", onclick: () => editDevice(host.id) }, host.name),
+    host.platform ? el("span", { class: "platform" }, host.platform) : null,
+  );
 }
 
 function noteBox(state, address) {
@@ -154,6 +168,7 @@ function single(state, address) {
         { class: "dev-card" },
         el("button", { type: "button", class: "dev-name", title: t("Editar equipo"), onclick: () => editDevice(d.id) }, d.name),
         el("div", { class: "muted" }, [typeLabel(d.type), d.os].filter(Boolean).join(" · ")),
+        hostLine(state, d),
         others.length
           ? el(
               "div",

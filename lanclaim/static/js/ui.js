@@ -62,10 +62,14 @@ export function confirmButton({ label, sureLabel, onConfirm, className = "btn da
   return button;
 }
 
-// Botones con los SO ya usados: un clic rellena el campo; × lo quita de la lista.
+// Botones con valores ya usados (SO, plataformas): un clic rellena el campo; × lo quita de la lista.
 export function osPicker(state, input, onForget) {
+  return choicePicker(state.os_choices, input, onForget);
+}
+
+export function choicePicker(saved, input, onForget) {
   const box = el("div", { class: "os-picker" });
-  let choices = [...(state.os_choices || [])];
+  let choices = [...(saved || [])];
   const paint = () => {
     const names = osSuggestions(choices, input.value);
     box.replaceChildren(

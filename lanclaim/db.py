@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 MAX_ADDRESSES = 4096
 MIN_PREFIX, MAX_PREFIX = 22, 30
 DEVICE_TYPES = ('vm', 'fisica', 'contenedor', 'otro')
@@ -30,11 +30,25 @@ CREATE INDEX ips_device ON ips(device_id);
 CREATE TABLE observations (
  address TEXT PRIMARY KEY, up INTEGER NOT NULL, checked_at TEXT NOT NULL, last_up_at TEXT
 );
-""" + """
--- v6: sistemas operativos ya usados, independientes de los equipos que los usaron.
-CREATE TABLE os_choices (name TEXT NOT NULL, name_key TEXT PRIMARY KEY, used_at TEXT NOT NULL);
 """
-OS_CHOICES_V6 = SCHEMA[SCHEMA.index('-- v6'):]
+
+# Migraciones incrementales a partir del esquema 5. Una instalación nueva crea el 5 y las aplica todas.
+DEFAULT_PLATFORMS = ('Proxmox VE', 'VMware ESXi', 'Vates XCP-ng', 'Nutanix AHV', 'Hyper-V', 'KVM', 'Local host')
+MIGRATIONS = {
+    # v6: sistemas operativos ya usados, independientes de los equipos que los usaron.
+    6: """
+CREATE TABLE os_choices (name TEXT NOT NULL, name_key TEXT PRIMARY KEY, used_at TEXT NOT NULL);
+INSERT OR IGNORE INTO os_choices(name, name_key, used_at)
+ SELECT os, lower(os), created_at FROM devices WHERE os <> '' ORDER BY created_at;
+""",
+    # v7: anfitrión de cada equipo y plataforma de virtualización del anfitrión.
+    7: """
+ALTER TABLE devices ADD COLUMN host_id INTEGER REFERENCES devices(id) ON DELETE SET NULL;
+ALTER TABLE devices ADD COLUMN platform TEXT NOT NULL DEFAULT '';
+CREATE INDEX devices_host ON devices(host_id);
+CREATE TABLE platform_choices (name TEXT NOT NULL, name_key TEXT PRIMARY KEY, used_at TEXT NOT NULL);
+""" + ''.join(f"INSERT INTO platform_choices VALUES('{p}', '{p.lower()}', '');\n" for p in reversed(DEFAULT_PLATFORMS)),
+}
 
 
 class Invalid(ValueError):
@@ -147,6 +161,7 @@ def _device_fields(data):
         'type': data.get('type') or 'vm',
         'os': _text(data, 'os', 120, label='sistema operativo'),
         'note': _text(data, 'note', 2000, label='nota'),
+        'platform': _text(data, 'platform', 60, label='plataforma'),
     }
     if fields['type'] not in DEVICE_TYPES:
         raise Invalid('Tipo de equipo desconocido.')
@@ -169,13 +184,10 @@ class Store:
             version = db.execute('PRAGMA user_version').fetchone()[0]
             if version > SCHEMA_VERSION:
                 raise RuntimeError('La base de datos pertenece a una versión más nueva de LanClaim.')
-            if version == 5:
-                db.executescript(f'''BEGIN;
-{OS_CHOICES_V6}
-INSERT OR IGNORE INTO os_choices(name, name_key, used_at)
- SELECT os, lower(os), created_at FROM devices WHERE os <> '' ORDER BY created_at;
-PRAGMA user_version={SCHEMA_VERSION};
-COMMIT;''')
+            if 5 <= version < SCHEMA_VERSION:
+                # Desde la versión 2 los datos se conservan: se aplican las migraciones pendientes en orden.
+                steps = ''.join(MIGRATIONS[v] for v in range(version + 1, SCHEMA_VERSION + 1))
+                db.executescript(f'BEGIN;\n{steps}PRAGMA user_version={SCHEMA_VERSION};\nCOMMIT;')
             elif version != SCHEMA_VERSION:
                 # Las versiones 0.x (esquemas 1-4) no se conservan: se descarta todo y se empieza vacío.
                 objects = db.execute("SELECT type, name FROM sqlite_master WHERE type IN ('table','view') "
@@ -183,7 +195,8 @@ COMMIT;''')
                 drops = ''.join(f'DROP {kind.upper()} IF EXISTS "{name.replace(chr(34), chr(34) * 2)}";\n'
                                 for kind, name in objects)
                 db.execute('PRAGMA foreign_keys=OFF')
-                db.executescript(f'BEGIN;\n{drops}{SCHEMA}PRAGMA user_version={SCHEMA_VERSION};\nCOMMIT;')
+                steps = ''.join(MIGRATIONS[v] for v in range(6, SCHEMA_VERSION + 1))
+                db.executescript(f'BEGIN;\n{drops}{SCHEMA}{steps}PRAGMA user_version={SCHEMA_VERSION};\nCOMMIT;')
         finally:
             db.close()
 
@@ -222,14 +235,15 @@ COMMIT;''')
         with self.connect() as db:
             networks = [dict(r) for r in db.execute('SELECT id, cidr, name FROM networks ORDER BY sort_key')]
             ips = [dict(r) for r in db.execute('SELECT address, device_id, note, claimed_at FROM ips ORDER BY sort_key')]
-            devices = [dict(r) for r in db.execute('SELECT id, name, type, os, note FROM devices ORDER BY name_key')]
+            devices = [dict(r) for r in db.execute('SELECT id, name, type, os, note, host_id, platform FROM devices ORDER BY name_key')]
             rows = db.execute('SELECT address, up, checked_at, last_up_at FROM observations').fetchall()
             watched = set(self._watched(db))
             os_choices = [r[0] for r in db.execute('SELECT name FROM os_choices ORDER BY used_at DESC, rowid DESC')]
+            platform_choices = [r[0] for r in db.execute('SELECT name FROM platform_choices ORDER BY used_at DESC, rowid DESC')]
         observations = {r['address']: {'up': bool(r['up']), 'checked_at': r['checked_at'], 'last_up_at': r['last_up_at']}
                         for r in rows if r['address'] in watched}
         return {'networks': networks, 'ips': ips, 'devices': devices, 'observations': observations,
-                'os_choices': os_choices}
+                'os_choices': os_choices, 'platform_choices': platform_choices}
 
     def watched_addresses(self):
         with self.connect() as db:
@@ -347,23 +361,53 @@ COMMIT;''')
             return row['id']
         return self._insert_device(db, _device_fields({'name': name, 'type': device.get('type'), 'os': device.get('os')}))
 
-    def _remember_os(self, db, os_name):
-        if os_name:
-            db.execute('INSERT INTO os_choices(name, name_key, used_at) VALUES(?,?,?) '
+    def _remember(self, db, table, value):
+        if value:
+            db.execute(f'INSERT INTO {table}(name, name_key, used_at) VALUES(?,?,?) '
                        'ON CONFLICT(name_key) DO UPDATE SET name=excluded.name, used_at=excluded.used_at',
-                       (os_name, os_name.casefold(), now()))
+                       (value, value.casefold(), now()))
 
     def forget_os(self, name):
         name = _text({'name': name}, 'name', 120, label='sistema operativo')
         with self.transaction() as db:
             db.execute('DELETE FROM os_choices WHERE name_key=?', (name.casefold(),))
 
-    def _insert_device(self, db, fields):
-        self._remember_os(db, fields['os'])
+    def forget_platform(self, name):
+        name = _text({'name': name}, 'name', 60, label='plataforma')
+        with self.transaction() as db:
+            db.execute('DELETE FROM platform_choices WHERE name_key=?', (name.casefold(),))
+
+    def _resolve_host(self, db, host, device_id=None):
+        """Anfitrión por id o por nombre (si no existe, se crea como equipo físico con su plataforma)."""
+        if host is None:
+            return None
+        if not isinstance(host, dict):
+            raise Invalid('Anfitrión inválido.')
+        if 'id' in host:
+            host_id = _int_id(host['id'], 'anfitrión')
+            if db.execute('SELECT 1 FROM devices WHERE id=?', (host_id,)).fetchone() is None:
+                raise Invalid('Ese anfitrión ya no existe.')
+        else:
+            name = _text(host, 'name', 120, True, 'nombre del anfitrión')
+            row = db.execute('SELECT id FROM devices WHERE name_key=?', (name.casefold(),)).fetchone()
+            host_id = row['id'] if row else self._insert_device(
+                db, _device_fields({'name': name, 'type': 'fisica', 'platform': host.get('platform')}))
+        # Sin ciclos: el anfitrión no puede ser el propio equipo ni algo que corre dentro de él.
+        current = host_id
+        while device_id is not None and current is not None:
+            if current == device_id:
+                raise Invalid('Un equipo no puede ser anfitrión de sí mismo ni de quien lo aloja.')
+            current = db.execute('SELECT host_id FROM devices WHERE id=?', (current,)).fetchone()['host_id']
+        return host_id
+
+    def _insert_device(self, db, fields, host_id=None):
+        self._remember(db, 'os_choices', fields['os'])
+        self._remember(db, 'platform_choices', fields['platform'])
         try:
-            return db.execute('INSERT INTO devices(name, name_key, type, os, note, created_at) VALUES(?,?,?,?,?,?)',
+            return db.execute('INSERT INTO devices(name, name_key, type, os, note, platform, host_id, created_at) '
+                              'VALUES(?,?,?,?,?,?,?,?)',
                               (fields['name'], fields['name'].casefold(), fields['type'], fields['os'],
-                               fields['note'], now())).lastrowid
+                               fields['note'], fields['platform'], host_id, now())).lastrowid
         except sqlite3.IntegrityError:
             raise Invalid(f'Ya existe un equipo llamado «{fields["name"]}».') from None
 
@@ -379,15 +423,18 @@ COMMIT;''')
                            (address, _sort_key(address), device_id, now()))
 
     def create_device(self, fields, addresses=()):
+        host = fields.get('host') if isinstance(fields, dict) else None
         fields = _device_fields(fields)
         targets = _optional_addresses(addresses)
         with self.transaction() as db:
-            device_id = self._insert_device(db, fields)
+            device_id = self._insert_device(db, fields, self._resolve_host(db, host))
             self._change_device_ips(db, device_id, targets, [])
             return device_id
 
     def update_device(self, device_id, fields, add=(), remove=()):
         device_id = _int_id(device_id, 'equipo')
+        has_host = isinstance(fields, dict) and 'host' in fields
+        host = fields.get('host') if has_host else None
         fields = _device_fields(fields)
         add, remove = _optional_addresses(add), _optional_addresses(remove)
         with self.transaction() as db:
@@ -397,9 +444,13 @@ COMMIT;''')
                                (fields['name'].casefold(), device_id)).fetchone()
             if clash:
                 raise Invalid(f'Ya existe un equipo llamado «{fields["name"]}».')
-            self._remember_os(db, fields['os'])
-            db.execute('UPDATE devices SET name=?, name_key=?, type=?, os=?, note=? WHERE id=?',
-                       (fields['name'], fields['name'].casefold(), fields['type'], fields['os'], fields['note'], device_id))
+            self._remember(db, 'os_choices', fields['os'])
+            self._remember(db, 'platform_choices', fields['platform'])
+            db.execute('UPDATE devices SET name=?, name_key=?, type=?, os=?, note=?, platform=? WHERE id=?',
+                       (fields['name'], fields['name'].casefold(), fields['type'], fields['os'], fields['note'],
+                        fields['platform'], device_id))
+            if has_host:
+                db.execute('UPDATE devices SET host_id=? WHERE id=?', (self._resolve_host(db, host, device_id), device_id))
             self._change_device_ips(db, device_id, add, remove)
 
     def delete_device(self, device_id):
