@@ -221,50 +221,51 @@ button.ipc:hover { border-color: var(--link); }
 .block-head:first-child { margin-top: 0; }
 .faceplate {
   position: relative; display: flex; align-items: stretch; border-radius: var(--r-lg);
-  background: linear-gradient(180deg, var(--plate-hi), var(--plate-lo));
-  border: 1px solid #2c3849; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 18px 40px -18px rgba(0, 0, 0, 0.7);
+  background: var(--panel); border: 1px solid var(--line);
 }
 .faceplate + .block-head { margin-top: 22px; }
 /* Orejas de rack con sus tornillos */
 .ear { flex: 0 0 22px; position: relative; }
-.ear.left { border-right: 1px solid rgba(0, 0, 0, 0.35); }
-.ear.right { border-left: 1px solid rgba(255, 255, 255, 0.03); }
+.ear.left { border-right: 1px solid var(--line); }
+.ear.right { border-left: 1px solid var(--line); }
 .ear::before, .ear::after {
-  content: ""; position: absolute; left: 50%; width: 9px; height: 9px; margin-left: -4.5px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #5b6a80, #1a222e 70%); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  content: ""; position: absolute; left: 50%; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%;
+  background: var(--bg); border: 1px solid var(--line-2);
 }
 .ear::before { top: 14px; }
 .ear::after { bottom: 14px; }
-.grid { flex: 1; display: grid; grid-template-columns: 30px repeat(16, minmax(0, 1fr)); gap: 5px; padding: 14px 12px 14px 6px; }
+.grid { flex: 1; display: grid; grid-template-columns: 30px repeat(16, minmax(0, 1fr)); gap: 6px; padding: 14px 12px 14px 6px; }
 .row-label { align-self: center; justify-self: end; padding-right: 4px; font: 500 11px var(--mono); color: var(--dim); }
-/* Puerto */
+/* Puerto: plano, relleno liso teñido según el estado, borde fino y el LED como un punto en la esquina. */
 .c {
-  position: relative; aspect-ratio: 5 / 4; border-radius: 5px; border: 0;
-  background: linear-gradient(180deg, #0f1620, var(--socket)); color: #5c6a80;
-  box-shadow: inset 0 0 0 1px var(--socket-edge), inset 0 3px 6px rgba(0, 0, 0, 0.55);
-  font: 500 11px var(--mono); display: flex; align-items: flex-end; justify-content: center; padding: 0 0 3px;
-  transition: transform 0.08s, opacity 0.15s, box-shadow 0.15s;
+  --tint: 255, 255, 255;
+  position: relative; aspect-ratio: 5 / 4; border-radius: 7px; padding: 0;
+  background: rgba(var(--tint), 0.035); border: 1px solid rgba(var(--tint), 0.07); color: #66738a;
+  font: 500 11.5px var(--mono); font-variant-numeric: tabular-nums;
+  display: flex; align-items: center; justify-content: center; padding-top: 5px;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, opacity 0.15s;
   touch-action: manipulation;
 }
-.c:hover:not(:disabled) { transform: translateY(-1px); box-shadow: inset 0 0 0 1px #46566d, inset 0 3px 6px rgba(0, 0, 0, 0.5); color: var(--ink); z-index: 2; }
-.c.unk { color: #3d495a; box-shadow: inset 0 0 0 1px #1d2633, inset 0 3px 6px rgba(0, 0, 0, 0.55); }
-.c.use { background: linear-gradient(180deg, #164532, #0f2c21); color: var(--link-tx); box-shadow: inset 0 0 0 1px #24704f, inset 0 2px 5px rgba(0, 0, 0, 0.35); }
-.c.res { background: linear-gradient(180deg, #13284a, #0e1b31); color: var(--resv); box-shadow: inset 0 0 0 1.5px #3a6aa8, inset 0 2px 5px rgba(0, 0, 0, 0.35); }
-.c.occ { background: linear-gradient(180deg, #3a2b10, #261c0b); color: var(--act); box-shadow: inset 0 0 0 1px #6a501d, inset 0 2px 5px rgba(0, 0, 0, 0.35); }
-.c.edge { background: transparent; color: #2a3443; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03); cursor: default; }
-/* LED del puerto */
-.c .dot { position: absolute; top: 5px; left: 50%; width: 7px; height: 4px; margin-left: -3.5px; border-radius: 2px; }
-.dot.up, .ld.up { background: var(--link); box-shadow: 0 0 6px var(--link), 0 0 2px var(--link); }
-.dot.down, .ld.down { background: var(--fault); box-shadow: 0 0 5px rgba(255, 107, 107, 0.7); }
-.dot.seen, .ld.seen { background: none; box-shadow: inset 0 0 0 1.5px var(--act), 0 0 5px rgba(245, 180, 81, 0.45); }
-.c.sel { box-shadow: 0 0 0 2px #fff, 0 0 14px rgba(255, 255, 255, 0.25) !important; z-index: 3; }
+.c:hover:not(:disabled) { background: rgba(var(--tint), 0.09); border-color: rgba(var(--tint), 0.28); color: var(--ink); z-index: 2; }
+.c.unk { background: transparent; border-color: rgba(255, 255, 255, 0.05); color: #434f61; }
+.c.use { --tint: 61, 220, 151; background: rgba(var(--tint), 0.15); border-color: rgba(var(--tint), 0.38); color: var(--link-tx); }
+.c.res { --tint: 108, 182, 255; background: rgba(var(--tint), 0.07); border: 1.5px solid rgba(var(--tint), 0.6); color: var(--resv); }
+.c.occ { --tint: 245, 180, 81; background: rgba(var(--tint), 0.13); border-color: rgba(var(--tint), 0.36); color: var(--act); }
+.c.use:hover:not(:disabled), .c.res:hover:not(:disabled), .c.occ:hover:not(:disabled) { background: rgba(var(--tint), 0.22); border-color: rgba(var(--tint), 0.7); }
+.c.edge { background: none; border: 1px dashed rgba(255, 255, 255, 0.05); color: #2e3847; cursor: default; }
+/* LED */
+.c .dot { position: absolute; top: 5px; left: 50%; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; }
+.dot.up, .ld.up { background: var(--link); }
+.dot.down, .ld.down { background: var(--fault); }
+.dot.seen, .ld.seen { background: none; box-shadow: inset 0 0 0 1.5px var(--act); }
+.c.sel { outline: 2px solid #fff; outline-offset: 1px; z-index: 3; }
 .c.fade, .iprow.fade { opacity: 0.14; }
 .c.flash { animation: flash 1.1s ease 2; }
-@keyframes flash { 50% { box-shadow: 0 0 0 3px var(--resv), 0 0 20px var(--resv); } }
-/* Barrido de escaneo: una ola de luz recorre los puertos */
+@keyframes flash { 50% { outline: 3px solid var(--resv); outline-offset: 2px; } }
+/* Barrido de escaneo: una ola discreta recorre los puertos */
 .grids.scanning .c:not(.edge)::after {
-  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
-  background: radial-gradient(circle at 50% 30%, rgba(108, 182, 255, 0.55), transparent 70%);
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+  border: 1px solid rgba(108, 182, 255, 0.75); background: rgba(108, 182, 255, 0.1);
   opacity: 0; animation: sweep 2.4s ease-in-out infinite; animation-delay: calc(var(--i, 0) * 8ms);
 }
 @keyframes sweep { 0%, 60%, 100% { opacity: 0; } 12% { opacity: 1; } }
@@ -285,7 +286,7 @@ button.ipc:hover { border-color: var(--link); }
 .hover { min-height: 20px; color: var(--mute); font-size: 12.5px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .legend { display: flex; gap: 16px; flex-wrap: wrap; color: var(--mute); font-size: 12px; margin-top: 6px; align-items: center; }
 .legend span { display: flex; align-items: center; gap: 7px; }
-.legend .ld { width: 8px; height: 5px; border-radius: 2px; }
+.legend .ld { width: 7px; height: 7px; border-radius: 50%; }
 .legend-tip { margin-left: auto; }
 
 /* ---------- Panel: etiqueta del puerto ---------- */
@@ -475,8 +476,9 @@ button.ipc:hover { border-color: var(--link); }
   .ear::before, .ear::after { width: 6px; height: 6px; margin-left: -3px; }
   .grid { grid-template-columns: 22px repeat(16, minmax(0, 1fr)); gap: 3px; padding: 10px 6px 10px 2px; }
   .row-label { font-size: 9px; padding-right: 2px; }
-  .c { font-size: 8.5px; border-radius: 3px; padding-bottom: 1px; }
-  .c .dot { top: 2px; width: 5px; height: 3px; margin-left: -2.5px; }
+  .c { font-size: 8.5px; border-radius: 4px; }
+  .c { padding-top: 3px; }
+  .c .dot { top: 2px; width: 4px; height: 4px; margin-left: -2px; }
   .legend .legend-tip, .scaninfo > span:first-child { display: none; }
   .scaninfo { margin-left: 0; }
   .panel { position: static; max-height: none; min-height: 0; }
