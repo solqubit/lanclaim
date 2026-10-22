@@ -94,9 +94,12 @@ Si la recuperación automática no logra arrancar el servicio:
   - Shift+clic o arrastrar selecciona varias.
   - **Necesito una IP** propone tu primera reservada o, si no hay, la primera libre que no ha respondido en 7 días.
 - **Otras:** IPs tuyas fuera de cualquier red registrada, por ejemplo tras quitar una red.
-- **Equipos:** crear, editar y eliminar equipos.
-  - En el formulario se quitan IPs (vuelven a reservadas), se añaden reservadas o se escribe una IP nueva, que se reclama al guardar.
-  - Eliminar un equipo deja sus IPs reservadas.
+- **Equipos:** las VMs y contenedores aparecen debajo de su máquina física; los que no tienen máquina se agrupan por plataforma. Crear y editar abren el panel lateral sin mover la lista.
+  - **Sistema operativo:** se elige de la biblioteca de iconos y se escribe solo la versión (en «Otro Linux» y «Otro sistema», también el nombre).
+  - **Máquina física y plataforma:** una VM puede indicar en qué máquina física corre y en qué plataforma de virtualización. Si la máquina tiene plataforma, la VM la hereda.
+  - **IP dinámica (DHCP):** el equipo no tiene IPs asignadas; sus VMs sí pueden tenerlas.
+  - En el formulario se quitan IPs (vuelven a reservadas), se añaden reservadas o se escribe una IP nueva, que se reclama al guardar. Eliminar un equipo deja sus IPs reservadas.
+  - **Etiquetas:** plataformas y sistemas operativos con cuántos equipos los usan; se renombran en todos a la vez y se quitan los que nadie usa.
 - **Idioma:** selector ES/EN en la barra superior. Se recuerda en el navegador.
 - **Teclado:** `/` busca y `Esc` limpia la selección y cierra formularios. Las flechas recorren la cuadrícula.
 

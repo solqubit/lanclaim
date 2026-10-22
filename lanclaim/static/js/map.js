@@ -422,7 +422,9 @@ function scanInfo(state) {
     );
     pollScan();
   } else {
-    const min = scan.total ? minutesSince(scan.finished_at) : null;
+    // Sin ciclo en esta sesión del servidor (recién arrancado): la hora del último resultado guardado.
+    const saved = Object.values(state.observations).map((o) => o.checked_at).sort().pop();
+    const min = scan.total ? minutesSince(scan.finished_at) : saved ? minutesSince(saved) : null;
     box.append(el("span", {}, min == null ? t("Aún sin ping") : t("Último ping {ago}", { ago: agoText(min) })));
     box.append(
       el(

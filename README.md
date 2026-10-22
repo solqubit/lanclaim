@@ -1,8 +1,14 @@
 # LanClaim
 
-**Your personal IP inventory.** See every address of your network on a map, claim the ones you want, and keep track of which device uses each of them. Self-hosted, dark interface, Spanish and English.
+**Your personal IP inventory.** See every address of your network on a map, claim the ones you want and keep track of which device uses each of them: physical machines, VMs and containers. Self-hosted, with a dark interface in Spanish and English.
 
 LanClaim is an inventory, not a DHCP server: claiming an IP records it as yours. It does not reserve it on a router.
+
+![Network view: the 192.168.1.0/24 map with assigned, reserved, used-by-others and free addresses, and the side panel of 192.168.1.13 (glpi, a Debian VM on Vates XCP-ng in rack-01)](docs/screenshots/red.png)
+
+![Devices view: physical machines with their VMs underneath, a DHCP workstation running VMware Workstation Pro, and the edit panel of ubuntu-dev with its inherited platform](docs/screenshots/equipos.png)
+
+*Screenshots with example data, interface in Spanish.*
 
 ## How it works
 
@@ -10,27 +16,37 @@ Every address is in one of four states:
 
 | State | Meaning |
 | --- | --- |
-| **Assigned** (green) | Yours, used by a device such as `glpi` or `nas-01`. |
+| **Assigned** (green) | Yours, used by a device such as `glpi` or `nas`. |
 | **Reserved** (blue outline) | Yours, waiting for the next install. |
 | **Used by someone else** (amber) | Not yours, but it answers ping. |
-| **Free** (grey) | Not yours and silent. A dimmer grey means it has never been pinged. |
+| **Free** (grey) | Not yours and silent. A fainter cell means it has never been pinged. |
 
-- **Network:** each registered network (`/22` to `/30`) is shown as a grid.
-  - Click a cell to claim it, assign it to a device (typing a new name creates the device), change or remove its device, add a note or release it.
-  - Shift+click or drag to select several cells at once. On touch screens, use **Select several**.
-  - **I need an IP** jumps to your first reserved address, or to the first free one that nobody answered from in the last 7 days.
-  - The counters work as filters, and the search box highlights cells by IP, device or note.
-  - IPs you claimed outside every registered network are listed under **Other**.
-- **Devices:** cards with name, type (VM, physical, container, other), OS, note and IPs.
-  - When editing a device you can remove an IP (it goes back to reserved), add one of your reserved IPs, or type a new IP, which is claimed on the spot.
-  - Deleting a device keeps its IPs as reserved.
-  - A VM or container runs on a virtualisation platform (Vates XCP-ng, VMware Workstation Pro, your own labels…) and, optionally, on a physical machine; inside a machine that has a platform, the VM inherits it. Devices are listed under their physical machine, or grouped by platform, and the form opens in a side panel so the list never jumps.
-  - A device can use a dynamic IP (DHCP): no IP is reserved for it, while its VMs keep fixed IPs.
-  - **Labels** lists your platforms and operating systems with how many devices use each: rename one everywhere at once, or remove the ones nobody uses.
-  - The operating system is picked from a library of flat icons (Windows, Ubuntu, Debian, Rocky, Alma, CentOS, Red Hat, Fedora, Alpine, Arch, openSUSE, FreeBSD, TrueNAS, Proxmox, macOS, other Linux, other system) and you type only the version. Icons are drawn in the app, with no downloads.
-- **Automatic ping:** the server pings every watched address every 5 minutes (`LANCLAIM_SCAN_INTERVAL`, in seconds; `0` turns it off). You can also press **Scan now**.
-  - A green dot means the device answers and a red dot means it does not. An amber ring marks a free IP that answered in the last 7 days, probably a device that is switched off.
-  - Ping never changes what is yours. A firewall may block ICMP, so a silent IP is not proof that it is free.
+### Network
+
+Each registered network (`/22` to `/30`) is shown as a grid of ports, with a bar summarising how much of it is in use.
+
+- Click a cell to claim it, assign it to a device (typing a new name creates the device), change or remove its device, add a note or release it.
+- Shift+click or drag to select several cells at once. On touch screens, use **Select several**.
+- **I need an IP** jumps to your first reserved address, or to the first free one nobody answered from in the last 7 days.
+- The counters work as filters, and the search box highlights cells by IP, device or note.
+- IPs you claimed outside every registered network are listed under **Other**.
+
+### Devices
+
+Devices are listed under the physical machine they run on. VMs without a machine are grouped by platform. The form opens in a side panel, so the list never jumps.
+
+- **Operating system:** picked from a library of flat icons (Windows, Ubuntu, Debian, Rocky Linux, AlmaLinux, CentOS, Red Hat, Fedora, Alpine, Arch, openSUSE, FreeBSD, TrueNAS, Proxmox VE, macOS, other Linux, other system). You type only the version. The icons are drawn in the app, with no downloads.
+- **Physical machine and platform:** a VM or container can run on a physical machine and on a virtualisation platform (Vates XCP-ng, VMware Workstation Pro, your own labels…). Inside a machine that has a platform, the VM inherits it. Picking a platform that only one machine runs fills in the machine.
+- **Dynamic IP (DHCP):** a device can be marked as DHCP. No IP is reserved for it, while the VMs it holds keep their fixed IPs.
+- **IPs:** remove one (it goes back to reserved), add one of your reserved IPs, or type a new IP, which is claimed on save. Deleting a device keeps its IPs as reserved.
+- **Labels:** your platforms and operating systems with how many devices use each one. Rename one everywhere at once, or remove the ones nobody uses.
+
+### Automatic ping
+
+The server pings every watched address every 5 minutes (`LANCLAIM_SCAN_INTERVAL`, in seconds; `0` turns it off), and right away when you add a network. You can also press **Scan now**.
+
+- On each port, a green dot means the device answers and a red dot means it does not. An amber ring marks a free IP that answered in the last 7 days, probably a device that is switched off.
+- Ping never changes what is yours. A firewall may block ICMP, so a silent IP is not proof that it is free.
 
 There are no Python package dependencies. Data lives in SQLite.
 
@@ -67,6 +83,8 @@ sudo ./uninstall.sh
 sudo ./uninstall.sh --purge
 ```
 
+Updates within version 2 keep your inventory: database changes are migrated on start.
+
 > **Upgrading from 0.x:** version 2 starts with an empty inventory. The previous database is discarded on first start; the copy made by `update.sh` stays in `/var/lib/lanclaim/backups`.
 
 This is a single-user tool without authentication, meant for a trusted private network. For any other access, put it behind an authenticated HTTPS reverse proxy or a VPN. Set `LANCLAIM_ALLOWED_HOSTS` when using a custom hostname. See the [operations guide](docs/OPERACION.md).
@@ -89,4 +107,3 @@ docker run --rm lanclaim-lifecycle:test
 - [Operación, instalación y recuperación](docs/OPERACION.md)
 - [Modelo de datos](docs/MODELO.md)
 - [Verificaciones y límites](docs/VERIFICACION.md)
-- [Diseño de la versión 2](docs/superpowers/specs/2026-10-21-lanclaim-rework-design.md)
