@@ -4,12 +4,14 @@ import { createAutosave } from "../lanclaim/static/js/autosave.js";
 // A rejected write must remain dirty and retry on blur without another edit.
 {
   let value = "draft", dirty, calls = 0;
-  const save = createAutosave({ initial: "saved", read: () => value, write: async () => ++calls > 1, onDirty: (v) => dirty = v });
+  const statuses = [];
+  const save = createAutosave({ initial: "saved", read: () => value, write: async () => ++calls > 1, onDirty: (v) => dirty = v, onStatus: (status) => statuses.push(status) });
   assert.equal(await save.flush(), false);
   assert.equal(dirty, true);
   assert.equal(await save.flush(), true);
   assert.equal(calls, 2);
   assert.equal(dirty, false);
+  assert.deepEqual(statuses, ["saving", "failed", "saving", "saved"], "Saved is shown only after acknowledgement");
 }
 
 // A transport exception behaves like a rejected write.

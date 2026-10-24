@@ -84,16 +84,18 @@ class HttpTests(unittest.TestCase):
         device = next(d for d in state['devices'] if d['name'] == 'glpi')
         self.assertEqual(ip['device_id'], device['id'])
         self.assertIn('csrf', state)
-        code, state = self.post('/api/devices/update', {'id': device['id'], 'created_at': device['created_at'], 'name': 'glpi', 'type': 'vm', 'os': 'Debian 12',
+        code, state = self.post('/api/devices/update', {'id': device['id'], 'created_at': device['created_at'], 'revision': device['revision'], 'name': 'glpi', 'type': 'vm', 'os': 'Debian 12',
                                                         'note': '', 'add': ['192.168.50.11'], 'remove': []})
         self.assertEqual(code, 200)
         self.assertEqual(len([i for i in state['ips'] if i['device_id'] == device['id']]), 2)
-        code, state = self.post('/api/ips/note', {'address': '192.168.50.11', 'note': 'hola'})
+        ip = next(i for i in state['ips'] if i['address'] == '192.168.50.11')
+        code, state = self.post('/api/ips/note', {'address': ip['address'], 'note': 'hola', 'expected_note': ip['note'], 'claimed_at': ip['claimed_at']})
         self.assertEqual(code, 200)
         code, state = self.post('/api/ips/unassign', {'addresses': ['192.168.50.11']})
         code, state = self.post('/api/ips/release', {'addresses': ['192.168.50.11']})
         self.assertNotIn('192.168.50.11', [i['address'] for i in state['ips']])
-        code, state = self.post('/api/devices/delete', {'id': device['id'], 'created_at': device['created_at']})
+        device = next(d for d in state['devices'] if d['id'] == device['id'])
+        code, state = self.post('/api/devices/delete', {'id': device['id'], 'created_at': device['created_at'], 'revision': device['revision']})
         self.assertEqual((code, state['devices']), (200, []))
 
     def test_forget_os_route(self):
@@ -102,7 +104,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertNotIn('FreeBSD 14', state['os_choices'])
         device = next(d for d in state['devices'] if d['name'] == 'os-test')
-        self.post('/api/devices/delete', {'id': device['id'], 'created_at': device['created_at']})
+        self.post('/api/devices/delete', {'id': device['id'], 'created_at': device['created_at'], 'revision': device['revision']})
         code, state = self.post('/api/platforms/rename', {'name': 'KVM', 'new': 'KVM / libvirt'})
         self.assertIn('KVM / libvirt', state['platform_choices'])
         code, state = self.post('/api/os/rename', {'name': 'nada', 'new': 'Nada 2'})
@@ -115,9 +117,10 @@ class HttpTests(unittest.TestCase):
         code, state = self.post('/api/networks/add', {'cidr': '172.20.0.0/28', 'name': 'Lab'})
         self.assertEqual(code, 200)
         net = next(n for n in state['networks'] if n['cidr'] == '172.20.0.0/28')
-        code, state = self.post('/api/networks/rename', {'id': net['id'], 'name': 'Lab 2'})
+        code, state = self.post('/api/networks/rename', {**net, 'name': 'Lab 2'})
         self.assertEqual(next(n for n in state['networks'] if n['id'] == net['id'])['name'], 'Lab 2')
-        code, state = self.post('/api/networks/remove', {'id': net['id']})
+        net = next(n for n in state['networks'] if n['id'] == net['id'])
+        code, state = self.post('/api/networks/remove', net)
         self.assertNotIn(net['id'], [n['id'] for n in state['networks']])
         code, _, body = self.request('/api/suggestions')
         self.assertEqual(code, 200)
@@ -130,7 +133,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.post('/api/devices/update', {'id': device['id'], 'name': 'Wrong device'})[0], 400)
         self.assertEqual(self.post('/api/devices/delete', {'id': device['id'], 'created_at': 'stale'})[0], 400)
         self.assertEqual(self.server.store.state()['devices'], state['devices'])
-        self.assertEqual(self.post('/api/devices/delete', {'id': device['id'], 'created_at': device['created_at']})[0], 200)
+        self.assertEqual(self.post('/api/devices/delete', {'id': device['id'], 'created_at': device['created_at'], 'revision': device['revision']})[0], 200)
 
     def test_adding_network_scans_it_right_away(self):
         self.post('/api/networks/add', {'cidr': '172.22.0.0/30'})
@@ -141,6 +144,38 @@ class HttpTests(unittest.TestCase):
                 break
             time.sleep(0.02)
         self.assertTrue(state['observations']['172.22.0.1']['up'])
+
+    def test_stale_device_edit_returns_conflict_and_preserves_latest_fields(self):
+        code, state = self.post('/api/devices/create', {'name': 'two-tabs', 'type': 'vm'})
+        original = next(d for d in state['devices'] if d['name'] == 'two-tabs')
+        code, state = self.post('/api/devices/update', {**original, 'name': 'two-tabs-new'})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.post('/api/devices/update', {**original, 'note': 'old form'})[0], 409)
+        self.assertEqual(self.post('/api/devices/delete', original)[0], 409)
+        current = next(d for d in self.server.store.state()['devices'] if d['id'] == original['id'])
+        self.assertEqual(current['name'], 'two-tabs-new')
+        self.assertEqual(self.post('/api/devices/delete', current)[0], 200)
+
+    def test_network_cidr_edit_and_stale_delete(self):
+        code, state = self.post('/api/networks/add', {'cidr': '198.51.100.0/28', 'name': 'Editable'})
+        original = next(n for n in state['networks'] if n['name'] == 'Editable')
+        self.post('/api/ips/claim', {'addresses': '198.51.100.10'})
+        code, state = self.post('/api/networks/update', {**original, 'cidr': '198.51.100.0/29', 'name': 'Edited'})
+        self.assertEqual(code, 200)
+        self.assertIn('198.51.100.10', [i['address'] for i in state['ips']])
+        self.assertEqual(self.post('/api/networks/remove', original)[0], 409)
+        current = next(n for n in state['networks'] if n['id'] == original['id'])
+        code, state = self.post('/api/networks/remove', current)
+        self.assertEqual(code, 200)
+        self.assertIn('198.51.100.10', [i['address'] for i in state['ips']])
+
+    def test_note_edit_conflict(self):
+        code, state = self.post('/api/ips/claim', {'addresses': '203.0.113.10'})
+        ip = next(i for i in state['ips'] if i['address'] == '203.0.113.10')
+        body = {'address': ip['address'], 'claimed_at': ip['claimed_at'], 'expected_note': ''}
+        self.assertEqual(self.post('/api/ips/note', {**body, 'note': 'Keep'})[0], 200)
+        self.assertEqual(self.post('/api/ips/note', {**body, 'note': 'Stale'})[0], 409)
+        self.assertEqual(next(i for i in self.server.store.state()['ips'] if i['address'] == ip['address'])['note'], 'Keep')
 
     def test_scan_settings_route(self):
         code, state = self.post('/api/scan/settings', {'interval': 900})

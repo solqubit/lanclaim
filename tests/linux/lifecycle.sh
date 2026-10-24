@@ -33,11 +33,16 @@ assert result['observations']['127.0.0.1']['up'] is True, result
 PY
 # An update must repair existing installations whose unit predates ICMP grants.
 sed -i '/^CapabilityBoundingSet=/d; /^AmbientCapabilities=/d' /etc/systemd/system/lanclaim.service
-# Mimic a previous schema. The backup must retain v10, not trigger v11's migration.
+# Mimic v10: the raw backup must not apply the pending migrations.
 systemctl stop lanclaim
 python3 - <<'PY'
 import sqlite3
 db = sqlite3.connect('/var/lib/lanclaim/lanclaim.sqlite3')
+for trigger in ('ip_device_added', 'ip_device_removed', 'ip_device_changed'):
+    db.execute('DROP TRIGGER ' + trigger)
+db.execute('ALTER TABLE devices DROP COLUMN revision')
+db.execute('ALTER TABLE networks DROP COLUMN revision')
+db.execute('ALTER TABLE observations DROP COLUMN error')
 db.execute('DROP TABLE identity_counters')
 db.execute('PRAGMA user_version=10')
 db.commit()
@@ -66,7 +71,7 @@ p = Path('lanclaim/server.py')
 s = p.read_text()
 needle = "    store = Store(Path(args.data_dir) / 'lanclaim.sqlite3')\n"
 assert needle in s
-s = s.replace(needle, needle + "    with store.transaction() as db:\n        db.execute(\"UPDATE devices SET name='BROKEN'\")\n        db.execute('PRAGMA user_version=12')\n    raise RuntimeError('simulated failed migration')\n", 1)
+s = s.replace(needle, needle + "    with store.transaction() as db:\n        db.execute(\"UPDATE devices SET name='BROKEN'\")\n        db.execute('PRAGMA user_version=13')\n    raise RuntimeError('simulated failed migration')\n", 1)
 p.write_text(s)
 PY
 if bash update.sh; then echo 'Expected update failure' >&2; exit 1; fi
@@ -90,7 +95,7 @@ state = json.load(urllib.request.urlopen(base + 'state'))
 assert len(state['ips']) == 3 and state['devices'][0]['name'] == 'Lifecycle test'
 # Deleting a device keeps its IPs claimed as reserved.
 device = state['devices'][0]
-request = urllib.request.Request(base + 'devices/delete', json.dumps({'id': device['id'], 'created_at': device['created_at']}).encode(),
+request = urllib.request.Request(base + 'devices/delete', json.dumps({'id': device['id'], 'created_at': device['created_at'], 'revision': device['revision']}).encode(),
     {'Content-Type': 'application/json', 'X-CSRF-Token': state['csrf']})
 after = json.load(urllib.request.urlopen(request))
 assert after['devices'] == [] and len(after['ips']) == 3

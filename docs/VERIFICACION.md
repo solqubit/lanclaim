@@ -1,5 +1,13 @@
 # Verificación de LanClaim 2
 
+## Administración y fiabilidad: esquema 12
+
+- 86 pruebas Python aprobadas en Windows. Incluyen migración de esquemas 10/11, rechazo transaccional de ediciones concurrentes, notas con identidad de reclamación, edición de CIDR con conservación de IPs/equipos/notas y escaneos parciales o totalmente fallidos.
+- Node: modelo con conectividad antigua/desconocida/fallida; borradores con restauración de revisión original y fallback ante almacenamiento no disponible; API con conflictos, JSON inválido, timeout y renovación CSRF sin cambiar la revisión enviada; autoguardado con reintentos y concurrencia; traducciones ES/EN.
+- Navegador con inventario aislado: Mapa/Lista, nombres visibles, edición de CIDR/nombre, borradores de equipo y red tras F5 y navegación, conflictos reales entre dos pestañas de equipo y notas, desconexión simulada conservando el inventario y reconexión mediante Reintentar, y eliminación de la red conservando sus tres IPs en Otras.
+- Docker Ubuntu: instalación, actualización desde v10, respaldo sin migrar, fallo simulado de versión v13 con recuperación, desinstalación, reinstalación y purga; aprobado con ICMP normal y restringido. Sintaxis JavaScript/Bash y ShellCheck aprobados.
+- El recomendador de IP se eliminó. No se añadieron importación/exportación, gestión de copias en la interfaz, reclamación directa de rangos ni escaneo por selección.
+
 ## Pruebas automáticas
 
 - **Python (`python -m unittest discover -s tests`)**:

@@ -22,10 +22,11 @@ import {
   composeOs,
   outsideIps,
   pingInfo,
-  suggestIp,
+  pingLabel,
 } from "../lanclaim/static/js/model.js";
 
 const NOW = Date.parse("2026-10-21T12:00:00Z");
+Date.now = () => NOW;
 const daysAgo = (d) => new Date(NOW - d * 86400000).toISOString();
 const NET = "192.168.1.0/24";
 
@@ -78,16 +79,19 @@ const c = counts(s, NET);
 assert.equal(c.use + c.res + c.occ + c.free, 254);
 assert.deepEqual([c.use, c.res, c.occ], [2, 1, 1]);
 
-assert.deepEqual(suggestIp(s, NET, NOW), { address: "192.168.1.43", reason: "reserved" });
-const noReserved = fixture();
-noReserved.ips = noReserved.ips.filter((i) => i.address !== "192.168.1.43");
-// .1 answered yesterday, .2 never answered -> first safe free host is .2
-assert.deepEqual(suggestIp(noReserved, NET, NOW), { address: "192.168.1.2", reason: "free" });
-const full = { ...fixture(), networks: [{ id: 2, cidr: "10.5.0.0/30", name: "" }], ips: [
-  { address: "10.5.0.1", device_id: 7, note: "", claimed_at: "" },
-  { address: "10.5.0.2", device_id: 7, note: "", claimed_at: "" },
-] };
-assert.equal(suggestIp(full, "10.5.0.0/30", NOW), null);
+assert.equal(pingInfo(s, "192.168.1.200", NOW).status, "unknown");
+assert.equal(pingInfo(s, "192.168.1.7", NOW).status, "up");
+assert.equal(pingInfo(s, "192.168.1.88", NOW).status, "down");
+const stale = { ...fixture(), observations: { "192.168.1.7": { up: true, checked_at: daysAgo(1), last_up_at: daysAgo(1) } } };
+assert.equal(pingInfo(stale, "192.168.1.7", NOW).status, "stale");
+assert.equal(pingInfo(stale, "192.168.1.7", NOW).up, null);
+assert.equal(ipStatus(stale, "192.168.1.7"), "free");
+const failed = { ...fixture(), observations: { "192.168.1.30": { up: true, checked_at: daysAgo(0), last_up_at: daysAgo(1), error: "no route" } } };
+assert.equal(pingInfo(failed, "192.168.1.30", NOW).status, "failed");
+assert.equal(pingInfo(failed, "192.168.1.30", NOW).up, null);
+assert.equal(ipStatus(failed, "192.168.1.30"), "use", "probe failures never release assignments");
+assert.equal(pingLabel(pingInfo(failed, "192.168.1.30", NOW)), "Comprobación fallida");
+assert.equal(pingInfo({ ...stale, scan: { interval: 86400 } }, "192.168.1.7", NOW).status, "up", "freshness allows the configured cycle");
 
 assert.deepEqual(outsideIps(s).map((i) => i.address), ["10.9.9.9"]);
 assert.equal(networkOf(s, "192.168.1.5").cidr, NET);

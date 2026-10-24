@@ -65,19 +65,28 @@ export function deviceOf(state, address) {
 export function ipStatus(state, address) {
   const ip = ipRecord(state, address);
   if (ip) return ip.device_id != null ? "use" : "res";
-  const obs = state.observations[address];
-  return obs && obs.up ? "occ" : "free";
+  return pingInfo(state, address).up === true ? "occ" : "free";
 }
 
 export function pingInfo(state, address, nowMs = Date.now()) {
   const obs = state.observations[address];
-  if (!obs) return { up: null, recent: false, lastUpAgoMin: null };
+  if (!obs) return { up: null, recent: false, lastUpAgoMin: null, status: "unknown", error: "", checkedAt: null };
   const lastUp = obs.last_up_at ? Date.parse(obs.last_up_at) : null;
+  const checked = Date.parse(obs.checked_at);
+  const maxAge = Math.max(15 * 60000, (state.scan?.interval || 0) * 2000);
+  const stale = !Number.isFinite(checked) || nowMs - checked > maxAge;
+  const status = obs.error ? "failed" : stale ? "stale" : obs.up ? "up" : "down";
   return {
-    up: obs.up,
+    up: status === "up" ? true : status === "down" ? false : null,
     recent: lastUp != null && nowMs - lastUp <= RECENT_MS,
     lastUpAgoMin: lastUp == null ? null : Math.max(0, Math.round((nowMs - lastUp) / 60000)),
+    status, error: obs.error || "", checkedAt: obs.checked_at,
   };
+}
+
+export function pingLabel(info) {
+  return ({ up: t("Responde"), down: t("No responde"), unknown: t("Sin comprobar"),
+    stale: t("Datos antiguos"), failed: t("Comprobación fallida") })[info.status];
 }
 
 export function networkOf(state, address) {
@@ -94,14 +103,6 @@ export function counts(state, cidr) {
     if (!isEdge(cidr, address)) result[ipStatus(state, address)]++;
   }
   return result;
-}
-
-export function suggestIp(state, cidr, nowMs = Date.now()) {
-  const hosts = networkHosts(cidr).filter((a) => !isEdge(cidr, a));
-  const reserved = hosts.find((a) => ipStatus(state, a) === "res");
-  if (reserved) return { address: reserved, reason: "reserved" };
-  const free = hosts.find((a) => ipStatus(state, a) === "free" && !pingInfo(state, a, nowMs).recent);
-  return free ? { address: free, reason: "free" } : null;
 }
 
 export function deviceIps(state, deviceId) {

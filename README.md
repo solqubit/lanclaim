@@ -2,11 +2,11 @@
 
 **English** · [Español](README.es.md)
 
-**Your personal IP inventory.** See every address of your network on a map, claim the ones you want and keep track of which device uses each of them: physical machines, VMs and containers. Self-hosted, with a dark interface in Spanish and English.
+**Your personal IP inventory.** See every address of your network on a map or a list, claim the ones you want and keep track of which device uses each of them: physical machines, VMs and containers. Self-hosted, with a dark interface in Spanish and English.
 
 LanClaim is an inventory, not a DHCP server: claiming an IP records it as yours. It does not reserve it on a router.
 
-![Network view: the 192.168.1.0/24 map with assigned, reserved, used-by-others and free addresses, and the side panel of 192.168.1.13 (glpi, a Debian VM on Vates XCP-ng in rack-01)](docs/screenshots/network.png)
+![Network list: device names, full IP addresses, inventory and connectivity, with the side panel for LMS at 192.0.2.1](docs/screenshots/network.png)
 
 ![Devices view: physical machines with their VMs underneath, a DHCP workstation running VMware Workstation Pro, and the edit panel of ubuntu-dev with its inherited platform](docs/screenshots/devices.png)
 
@@ -21,17 +21,20 @@ Every address is in one of four states:
 | **Assigned** (green) | Yours, used by a device such as `glpi` or `nas`. |
 | **Reserved** (blue outline) | Yours, waiting for the next install. |
 | **Used by someone else** (amber) | Not yours, but it answers ping. |
-| **Free** (grey) | Not yours and silent. A fainter cell means it has never been pinged. |
+| **No confirmed activity** (grey) | Unclaimed with no current positive response. It may be unchecked, outdated or have a failed check. |
 
 ### Network
 
-Each registered network (`/22` to `/30`) is shown as a grid of ports, with a bar summarising how much of it is in use.
+Each registered network (`/22` to `/30`) offers **Map / List** with the same selection and panel. The list shows device name, full IP, inventory status, connectivity and last check.
 
 - Click a cell to claim it, assign it to a device (typing a new name creates the device), change or remove its device, add a note or release it.
 - Shift+click or drag to select several cells at once. On touch screens, use **Select several**.
-- **I need an IP** jumps to your first reserved address, or to the first free one nobody answered from in the last 7 days.
+- **Manage network** edits the name and CIDR or removes the network. Claimed IPs, devices and notes are preserved; IPs outside the subnet appear in **Other**.
 - The counters work as filters. **All**, selected by default, clears the status filter with one click. The search box highlights cells by IP, device or note.
 - IPs you claimed outside every registered network are listed under **Other**.
+- **Make available** removes the assignment but keeps the IP and its note. **Unclaim** removes the IP and its note from the inventory.
+- Device, network, assignment and note drafts survive navigation and reload within the tab. Concurrent edits require reviewing the server version before overwriting changes.
+- Network notices list responding reserved IPs and failed checks. Connectivity distinguishes responding, no response, unchecked, outdated and failed results. A persistent banner reports lost server connectivity.
 
 ### Devices
 
@@ -99,6 +102,8 @@ python3 -m unittest discover -s tests -v
 node tests/test_model.mjs
 node tests/test_i18n.mjs
 node tests/test_autosave.mjs
+node tests/test_drafts.mjs
+node tests/test_api.mjs
 bash -n install.sh update.sh uninstall.sh scripts/common.sh
 
 # Disposable Linux integration environment; no host service changes:

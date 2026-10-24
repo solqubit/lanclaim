@@ -2,11 +2,11 @@
 
 [English](README.md) · **Español**
 
-**Tu inventario personal de IPs.** Mira cada dirección de tu red en un mapa, reclama las que quieras y lleva la cuenta de qué equipo usa cada una: máquinas físicas, VMs y contenedores. Autoalojado, con interfaz oscura en español e inglés.
+**Tu inventario personal de IPs.** Mira cada dirección de tu red en un mapa o una lista, reclama las que quieras y lleva la cuenta de qué equipo usa cada una: máquinas físicas, VMs y contenedores. Autoalojado, con interfaz oscura en español e inglés.
 
 LanClaim es un inventario, no un servidor DHCP: reclamar una IP la registra como tuya. No la reserva en el router.
 
-![Vista Red: el mapa de 192.168.1.0/24 con direcciones asignadas, reservadas, ocupadas por otros y libres, y el panel de 192.168.1.13 (glpi, una VM Debian en Vates XCP-ng sobre rack-01)](docs/screenshots/red.png)
+![Vista Red en lista: nombre e IP completa, asignación y conectividad, con el panel de LMS en 192.0.2.1](docs/screenshots/red.png)
 
 ![Vista Equipos: máquinas físicas con sus VMs debajo, una workstation con DHCP y VMware Workstation Pro, y el panel de edición de ubuntu-dev con su plataforma heredada](docs/screenshots/equipos.png)
 
@@ -21,17 +21,19 @@ Cada dirección está en uno de cuatro estados:
 | **Asignada** (verde) | Tuya y en uso por un equipo, como `glpi` o `nas`. |
 | **Reservada** (contorno azul) | Tuya, esperando la próxima instalación. |
 | **Ocupada por otro** (ámbar) | No es tuya, pero responde al ping. |
-| **Libre** (gris) | No es tuya y no responde. Si la celda es más tenue, nunca se le ha hecho ping. |
+| **Sin actividad confirmada** (gris) | No es tuya y no hay una respuesta positiva vigente. Puede estar sin comprobar o tener datos antiguos o fallidos. |
 
 ### Red
 
-Cada red registrada (de `/22` a `/30`) se muestra como una cuadrícula de puertos, con una barra que resume cuánto está en uso.
+Cada red registrada (de `/22` a `/30`) ofrece **Mapa / Lista**, con la misma selección y panel. La lista muestra nombre, IP completa, inventario, conectividad y última comprobación.
 
 - Haz clic en una celda para reclamarla, asignarla a un equipo (si escribes un nombre nuevo, el equipo se crea), cambiar o quitar su equipo, añadir una nota o liberarla.
 - Shift+clic o arrastrar selecciona varias celdas a la vez. En pantallas táctiles, usa **Seleccionar varias**.
-- **Necesito una IP** te lleva a tu primera dirección reservada o, si no hay, a la primera libre que no ha respondido en los últimos 7 días.
+- **Administrar red** permite cambiar nombre y segmento CIDR o quitar la red. Conserva tus IPs, equipos y notas; las IPs fuera del segmento aparecen en **Otras**.
 - Los contadores funcionan como filtros. **Todas**, activa por defecto, quita el filtro de estado con un clic. El buscador resalta las celdas por IP, equipo o nota.
 - Las IPs reclamadas fuera de toda red registrada aparecen en **Otras**.
+- **Dejar disponible** quita la asignación y conserva la IP y su nota. **Dejar de reclamar** elimina la IP del inventario y su nota.
+- Los borradores de equipos, redes, asignaciones y notas sobreviven a navegar y recargar dentro de la pestaña. Las ediciones concurrentes piden revisar la versión del servidor antes de sobrescribirla.
 
 ### Equipos
 
@@ -49,6 +51,7 @@ El servidor hace ping a todas las direcciones vigiladas según un ciclo, y enseg
 
 - En la vista Red, **Ping automático** lo desactiva o fija el ciclo, de cada minuto a una vez al día. La elección se guarda en el servidor y se aplica al momento. `LANCLAIM_SCAN_INTERVAL` (segundos, 300 por defecto) solo es el valor inicial mientras no elijas otro.
 - En cada puerto, un punto verde indica que el equipo responde y uno rojo que no. Un anillo ámbar marca una IP libre que respondió en los últimos 7 días, probablemente un equipo apagado.
+- **Avisos de esta red** muestra reservadas que responden y comprobaciones fallidas. Se distinguen respuestas, ausencia de respuesta, direcciones sin comprobar y datos antiguos. La interfaz avisa si pierde conexión.
 - El ping nunca cambia lo que es tuyo. Un firewall puede bloquear ICMP, así que una IP que no responde no tiene por qué estar libre.
 
 No tiene dependencias de paquetes de Python. Los datos se guardan en SQLite.
@@ -99,6 +102,8 @@ python3 -m unittest discover -s tests -v
 node tests/test_model.mjs
 node tests/test_i18n.mjs
 node tests/test_autosave.mjs
+node tests/test_drafts.mjs
+node tests/test_api.mjs
 bash -n install.sh update.sh uninstall.sh scripts/common.sh
 
 # Entorno Linux de integración desechable; no cambia servicios del equipo:

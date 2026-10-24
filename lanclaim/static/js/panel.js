@@ -1,12 +1,15 @@
 // Panel lateral: acciones según lo seleccionado en el mapa.
 import { t, typeLabel } from "./i18n.js";
 import { act, editDevice, forgetOs, goto, markDirty, render, ui } from "./main.js";
-import { agoText, byIp, deviceIps, deviceOf, effectivePlatform, ipRecord, ipStatus, minutesSince, networkHosts, isEdge, pingInfo } from "./model.js";
+import { agoText, byIp, deviceIps, deviceOf, effectivePlatform, ipRecord, ipStatus, minutesSince, networkHosts, isEdge, pingInfo, pingLabel } from "./model.js";
 import { osIcon } from "./icons.js";
 import { confirmButton, deviceInput, el, toast } from "./ui.js";
 import { createAutosave } from "./autosave.js";
+import { clearDraft, readDraft, saveDraft } from "./drafts.js";
+import { state as liveState } from "./main.js";
 
-const PILL = { use: "Asignada", res: "Reservada", occ: "Ocupada por otro", free: "Libre" };
+const PILL = { use: "Asignada", res: "Reservada", occ: "Ocupada por otro", free: "Sin actividad confirmada" };
+const noteEditors = new Map();
 
 // Firma de lo que muestra el panel: si no cambia, el refresco suave conserva el panel actual.
 function panelSig(state, ui) {
@@ -16,7 +19,7 @@ function panelSig(state, ui) {
     const d = deviceOf(state, a);
     const p = pingInfo(state, a, now);
     const checked = state.observations[a]?.checked_at;
-    return [a, ipStatus(state, a), ip?.note, d && [d.id, d.name, d.type, d.os, d.host_id], p.up, p.recent, agoText(p.lastUpAgoMin ?? 0), checked && agoText(minutesSince(checked))];
+    return [a, ipStatus(state, a), ip?.note, d && [d.id, d.name, d.type, d.os, d.host_id, d.platform, d.revision], p.up, p.status, p.error, p.recent, agoText(p.lastUpAgoMin ?? 0), checked && agoText(minutesSince(checked))];
   });
   const reserved = ui.sel.size ? 0 : state.ips.filter((ip) => ip.device_id == null).map((ip) => ip.address + ip.note).join();
   return JSON.stringify([ui.net, rows, reserved, state.devices.length]);
@@ -44,8 +47,10 @@ export function renderPanel(state, ui) {
 function pingLine(state, address) {
   const info = pingInfo(state, address);
   const obs = state.observations[address];
-  if (info.up === null) return t("Sin datos de ping todavía");
+  if (info.status === "failed") return t("Comprobación fallida: {reason}", { reason: t(info.error) });
+  if (info.status === "unknown") return t("Sin comprobar. No se conoce su conectividad.");
   const checked = agoText(minutesSince(obs.checked_at));
+  if (info.status === "stale") return t("Datos antiguos · última comprobación {ago}", { ago: checked });
   if (info.up) return t("Responde al ping · comprobado {ago}", { ago: checked });
   if (info.lastUpAgoMin != null) return t("No responde · respondió por última vez {ago}", { ago: agoText(info.lastUpAgoMin) });
   return t("No responde · nunca ha respondido");
@@ -96,38 +101,84 @@ function hostLine(state, d) {
 
 function noteBox(state, address) {
   const ip = ipRecord(state, address);
+  const draftKey = `note:${address}:${ip.claimed_at}`;
+  const existing = noteEditors.get(draftKey);
+  if (existing && (existing.autosave.isDirty() || existing.autosave.isPending())) return existing.node;
+  const draft = readDraft(draftKey);
+  let expectedNote = draft?.expectedNote ?? ip.note;
+  let lastError = "";
+  const feedback = el("span", { class: "save-state", role: "status" }, draft ? t("Borrador restaurado") : t("Guardado"));
+  const retry = el("button", { type: "button", class: "btn sm", hidden: true, onclick: () => autosave.flush() }, t("Reintentar"));
+  const conflict = el("div", { class: "conflict-box", hidden: true });
   const area = el("textarea", {
     class: "in",
     rows: 2,
     maxlength: 2000,
     placeholder: t("Nota de esta IP…"),
-    value: ip.note,
+    value: draft?.value ?? ip.note,
     "aria-label": t("Nota"),
     oninput: markDirty,
   });
   // Se guarda sola al dejar de escribir y al salir del campo, sin repintar el panel.
   const autosave = createAutosave({
-    initial: ip.note,
+    initial: expectedNote,
     read: () => area.value,
-    write: (note) => act("ips/note", { address, note }, t("Nota guardada"), { quiet: true }),
-    onDirty: (dirty) => dirty ? area.setAttribute("data-dirty", "") : area.removeAttribute("data-dirty"),
+    write: async (note) => {
+      const ok = await act("ips/note", { address, note, expected_note: expectedNote, claimed_at: ip.claimed_at }, null,
+        { quiet: true, onError: (error) => {
+          lastError = error.message;
+          if (error.status === 409) {
+            const current = ipRecord(liveState, address);
+            conflict.hidden = false;
+            conflict.replaceChildren(el("h3", {}, t("Versión actual en el servidor")), el("p", {}, current?.note || "—"),
+              current?.claimed_at === ip.claimed_at ? el("button", { type: "button", class: "btn sm", onclick: () => {
+                expectedNote = current.note; persistDraft(); conflict.hidden = true; autosave.flush();
+              } }, t("Guardar mi nota sobre esta versión")) : null);
+          }
+        } });
+      if (ok) expectedNote = note;
+      return ok;
+    },
+    onDirty: (dirty) => {
+      if (dirty) { area.setAttribute("data-dirty", ""); persistDraft(); }
+      else { area.removeAttribute("data-dirty"); clearDraft(draftKey); }
+    },
+    onStatus: (status) => {
+      feedback.dataset.state = status;
+      feedback.textContent = status === "saving" ? t("Guardando…") : status === "saved" ? t("Guardado")
+        : status === "failed" ? lastError || t("No se guardó la nota.") : t("Cambios pendientes");
+      retry.hidden = status !== "failed";
+    },
   });
+  const persistDraft = () => saveDraft(draftKey, { value: area.value, expectedNote });
   let timer;
   const save = () => {
     clearTimeout(timer);
+    if (!conflict.hidden) return Promise.resolve(false);
     return autosave.flush();
   };
   area.addEventListener("input", () => {
+    persistDraft();
+    feedback.textContent = t("Cambios pendientes");
     clearTimeout(timer);
     timer = setTimeout(save, 900);
   });
   area.addEventListener("blur", save);
-  return el("label", { class: "field" }, el("span", { class: "lbl" }, t("Nota")), area);
+  if (draft) area.setAttribute("data-dirty", "");
+  const node = el("div", { class: "field" }, el("label", {}, el("span", { class: "lbl" }, t("Nota")), area),
+    el("div", { class: "row" }, feedback, retry), conflict);
+  noteEditors.set(draftKey, { node, autosave });
+  return node;
 }
 
 function assignForm(state, addresses, { label, button, claim }) {
-  const input = deviceInput(state, { onForgetOs: forgetOs });
-  const submit = () => {
+  const draftKey = "assign:" + [...addresses].sort(byIp).map((a) => `${a}:${ipRecord(state, a)?.claimed_at || ""}`).join();
+  const draft = readDraft(draftKey);
+  let persistDraft = () => {};
+  const input = deviceInput(state, { onForgetOs: forgetOs, value: draft?.name || "", initialType: draft?.type || "vm", initialOs: draft?.os || "", onDirty: () => persistDraft() });
+  const feedback = el("p", { class: "save-state", role: "status" }, draft ? t("Borrador restaurado") : "");
+  const submit = async () => {
+    if (submitButton.disabled) return;
     const device = input.read();
     if (!device) {
       toast(t("Escribe el nombre de un equipo."), "error");
@@ -135,26 +186,43 @@ function assignForm(state, addresses, { label, button, claim }) {
       return;
     }
     const name = device.name || state.devices.find((d) => d.id === device.id).name;
-    act("ips/claim", { addresses, device }, claim ? t("{n} IP(s) para {name}", { n: addresses.length, name }) : t("Asignada a {name}", { name }));
+    submitButton.disabled = true;
+    form.inert = true;
+    feedback.textContent = t("Guardando…");
+    const ok = await act("ips/claim", { addresses, device }, claim ? t("{n} IP(s) para {name}", { n: addresses.length, name }) : t("Asignada a {name}", { name }),
+      { quiet: true, onError: (error) => { feedback.textContent = error.message; feedback.dataset.state = "error"; } });
+    submitButton.disabled = false;
+    form.inert = false;
+    if (ok) { clearDraft(draftKey); form.removeAttribute("data-dirty"); feedback.textContent = t("Guardado"); render({ soft: true }); }
   };
   input.input.addEventListener("keydown", (e) => e.key === "Enter" && submit());
   input.input.addEventListener("input", markDirty);
-  return el(
+  const submitButton = el("button", { type: "button", class: "btn primary", onclick: submit }, button);
+  const form = el(
     "div",
     { class: "field" },
     el("span", { class: "lbl" }, label),
     input.node,
-    el("div", { class: "row" }, el("button", { type: "button", class: "btn primary", onclick: submit }, button)),
+    el("div", { class: "row" }, submitButton,
+      el("button", { type: "button", class: "btn ghost sm", onclick: () => { clearDraft(draftKey); render(); } }, t("Descartar borrador"))),
+    feedback,
   );
+  persistDraft = () => {
+    form.setAttribute("data-dirty", "");
+    saveDraft(draftKey, input.snapshot());
+    feedback.textContent = t("Borrador guardado en esta pestaña");
+  };
+  if (draft) form.setAttribute("data-dirty", "");
+  return form;
 }
 
 function releaseButton(state, addresses) {
   const risky = addresses.length > 1 || addresses.some((a) => { const ip = ipRecord(state, a); return ip.device_id != null || ip.note; });
-  const message = addresses.length > 1 ? t("{n} IPs liberadas", { n: addresses.length }) : t("{ip} liberada, ya no es tuya", { ip: addresses[0] });
+  const message = addresses.length > 1 ? t("{n} IPs fuera del inventario", { n: addresses.length }) : t("{ip} fuera del inventario", { ip: addresses[0] });
   const run = () => act("ips/release", { addresses }, message).then((ok) => ok && (ui.sel.clear(), render()));
-  const label = addresses.length > 1 ? t("Liberar {n}", { n: addresses.length }) : t("Liberar");
+  const label = addresses.length > 1 ? t("Dejar de reclamar {n}", { n: addresses.length }) : t("Dejar de reclamar");
   if (!risky) return el("button", { type: "button", class: "btn danger", onclick: run, title: t("Deja de ser tuya") }, label);
-  return confirmButton({ label, sureLabel: t("¿Seguro? Deja de ser tuya"), onConfirm: run });
+  return confirmButton({ label, sureLabel: t("¿Dejar de reclamar? Se quitará del inventario."), onConfirm: run });
 }
 
 function single(state, address) {
@@ -204,7 +272,7 @@ function single(state, address) {
         el(
           "button",
           { type: "button", class: "btn", onclick: () => act("ips/unassign", { addresses: [address] }, t("{ip} vuelve a estar reservada", { ip: address })) },
-          t("Quitar equipo"),
+          t("Dejar disponible"),
         ),
         el("span", { class: "spacer" }),
         releaseButton(state, [address]),
@@ -264,7 +332,7 @@ function multi(state) {
       el(
         "button",
         { type: "button", class: "btn", onclick: () => act("ips/unassign", { addresses: assigned }, t("{n} IPs vuelven a estar reservadas", { n: assigned.length })) },
-        t("Quitar equipo de {n}", { n: assigned.length }),
+        t("Dejar disponibles {n}", { n: assigned.length }),
       ),
     );
   }
@@ -283,8 +351,8 @@ function multi(state) {
 function idle(state) {
   const out = [
     ui.net === "outside"
-      ? el("div", { class: "idle" }, el("h2", {}, t("Elige una IP de la lista")), el("p", { class: "muted" }, t("Puedes asignarla a un equipo, quitárselo o liberarla.")))
-      : el("div", { class: "idle" }, el("h2", {}, t("Elige una IP del mapa")), el("p", { class: "muted" }, t("Haz clic en una celda para reclamarla, asignarla a un equipo o liberarla."))),
+      ? el("div", { class: "idle" }, el("h2", {}, t("Elige una IP de la lista")), el("p", { class: "muted" }, t("Puedes asignarla, dejarla disponible o dejar de reclamarla.")))
+      : el("div", { class: "idle" }, el("h2", {}, t("Elige una IP del mapa")), el("p", { class: "muted" }, t("Elige una IP para reclamarla, asignarla o administrarla."))),
   ];
   if (ui.net && ui.net !== "outside") {
     const hosts = networkHosts(ui.net).filter((a) => !isEdge(ui.net, a));
@@ -303,7 +371,7 @@ function idle(state) {
                 return el("button", { type: "button", class: "ipc res", title: note ? `${a} — ${note}` : a, onclick: () => goto(a) }, "." + a.split(".")[3], note ? " ✎" : "");
               }),
             )
-          : el("p", { class: "hint" }, t("Ninguna. Reclama una IP libre para guardarla.")),
+          : el("p", { class: "hint" }, t("Ninguna. Reclama una IP del mapa para guardarla.")),
       ),
     );
   }

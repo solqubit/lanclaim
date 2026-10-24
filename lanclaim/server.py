@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 from . import __version__
 from .backup import backup_database
-from .db import Invalid, Store
+from .db import Conflict, Invalid, Store
 from .networks import local_networks
 from .scanner import Scanner
 
@@ -34,16 +34,22 @@ class Server(ThreadingHTTPServer):
         store, scanner = self.store, self.scanner
         self.actions = {
             'networks/add': lambda d: (store.add_network(d.get('cidr'), d.get('name', '')), scanner.scan_now()),
-            'networks/rename': lambda d: store.rename_network(d.get('id'), d.get('name', '')),
-            'networks/remove': lambda d: store.remove_network(d.get('id')),
+            'networks/rename': lambda d: store.rename_network(d.get('id'), d.get('name', ''),
+                expected_created_at=d.get('created_at'), expected_revision=d.get('revision')),
+            'networks/update': lambda d: (store.update_network(d.get('id'), d.get('cidr'), d.get('name', ''),
+                expected_created_at=d.get('created_at'), expected_revision=d.get('revision')), scanner.scan_now()),
+            'networks/remove': lambda d: store.remove_network(d.get('id'),
+                expected_created_at=d.get('created_at'), expected_revision=d.get('revision')),
             'ips/claim': lambda d: store.claim(d.get('addresses'), d.get('device')),
             'ips/release': lambda d: store.release(d.get('addresses')),
             'ips/unassign': lambda d: store.unassign(d.get('addresses')),
-            'ips/note': lambda d: store.set_note(d.get('address'), d.get('note', '')),
+            'ips/note': lambda d: store.set_note(d.get('address'), d.get('note', ''),
+                expected_note=d.get('expected_note'), expected_claimed_at=d.get('claimed_at')),
             'devices/create': lambda d: store.create_device(d, d.get('addresses')),
             'devices/update': lambda d: store.update_device(d.get('id'), d, d.get('add'), d.get('remove'),
-                                                           expected_created_at=d.get('created_at')),
-            'devices/delete': lambda d: store.delete_device(d.get('id'), expected_created_at=d.get('created_at')),
+                expected_created_at=d.get('created_at'), expected_revision=d.get('revision')),
+            'devices/delete': lambda d: store.delete_device(d.get('id'), expected_created_at=d.get('created_at'),
+                expected_revision=d.get('revision')),
             'os/forget': lambda d: store.forget_os(d.get('name')),
             'platforms/forget': lambda d: store.forget_platform(d.get('name')),
             'platforms/rename': lambda d: store.rename_platform(d.get('name'), d.get('new')),
@@ -150,6 +156,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(404, {'error': 'No encontrado.'})
             action(data)
             return self.send(200, self.server.state())
+        except Conflict as exc:
+            return self.send(409, {'error': str(exc), 'code': 'conflict'})
         except (Invalid, ValueError, TypeError) as exc:
             return self.send(400, {'error': str(exc)})
         except Exception as exc:

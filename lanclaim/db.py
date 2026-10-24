@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from .backup import backup_database
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 _UNSET = object()
 MAX_ADDRESSES = 4096
 MIN_PREFIX, MAX_PREFIX = 22, 30
@@ -81,10 +81,29 @@ CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE identity_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL CHECK(value >= 0));
 INSERT INTO identity_counters VALUES('device_id', (SELECT COALESCE(MAX(id), 0) FROM devices));
 """,
+    12: """
+ALTER TABLE devices ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE networks ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE observations ADD COLUMN error TEXT NOT NULL DEFAULT '';
+INSERT INTO identity_counters VALUES('network_id', (SELECT COALESCE(MAX(id), 0) FROM networks));
+CREATE TRIGGER ip_device_added AFTER INSERT ON ips WHEN NEW.device_id IS NOT NULL BEGIN
+ UPDATE devices SET revision=revision+1 WHERE id=NEW.device_id;
+END;
+CREATE TRIGGER ip_device_removed AFTER DELETE ON ips WHEN OLD.device_id IS NOT NULL BEGIN
+ UPDATE devices SET revision=revision+1 WHERE id=OLD.device_id;
+END;
+CREATE TRIGGER ip_device_changed AFTER UPDATE OF device_id ON ips WHEN OLD.device_id IS NOT NEW.device_id BEGIN
+ UPDATE devices SET revision=revision+1 WHERE id IN (OLD.device_id, NEW.device_id);
+END;
+""",
 }
 
 
 class Invalid(ValueError):
+    pass
+
+
+class Conflict(Invalid):
     pass
 
 
@@ -264,15 +283,16 @@ class Store:
 
     def state(self):
         with self.connect() as db:
-            networks = [dict(r) for r in db.execute('SELECT id, cidr, name FROM networks ORDER BY sort_key')]
+            db.execute('BEGIN')
+            networks = [dict(r) for r in db.execute('SELECT id, cidr, name, created_at, revision FROM networks ORDER BY sort_key')]
             ips = [dict(r) for r in db.execute('SELECT address, device_id, note, claimed_at FROM ips ORDER BY sort_key')]
             devices = [{**dict(r), 'dhcp': bool(r['dhcp'])} for r in db.execute(
-                'SELECT id, name, type, os, note, host_id, platform, dhcp, created_at FROM devices ORDER BY name_key')]
-            rows = db.execute('SELECT address, up, checked_at, last_up_at FROM observations').fetchall()
+                'SELECT id, name, type, os, note, host_id, platform, dhcp, created_at, revision FROM devices ORDER BY name_key')]
+            rows = db.execute('SELECT address, up, checked_at, last_up_at, error FROM observations').fetchall()
             watched = set(self._watched(db))
             os_choices = [r[0] for r in db.execute('SELECT name FROM os_choices ORDER BY used_at DESC, rowid DESC')]
             platform_choices = [r[0] for r in db.execute('SELECT name FROM platform_choices ORDER BY used_at DESC, rowid DESC')]
-        observations = {r['address']: {'up': bool(r['up']), 'checked_at': r['checked_at'], 'last_up_at': r['last_up_at']}
+        observations = {r['address']: {'up': bool(r['up']), 'checked_at': r['checked_at'], 'last_up_at': r['last_up_at'], 'error': r['error']}
                         for r in rows if r['address'] in watched}
         return {'networks': networks, 'ips': ips, 'devices': devices, 'observations': observations,
                 'os_choices': os_choices, 'platform_choices': platform_choices}
@@ -327,17 +347,51 @@ class Store:
                     raise Invalid(f'{network} se solapa con {other}, que ya está registrada.')
             if sum(n.num_addresses for n in existing) + network.num_addresses > MAX_ADDRESSES:
                 raise Invalid(f'Entre todas las redes no pueden pasar de {MAX_ADDRESSES} direcciones.')
-            return db.execute('INSERT INTO networks(cidr, sort_key, name, created_at) VALUES(?,?,?,?)',
-                              (str(network), int(network.network_address), name, now())).lastrowid
+            edges = (str(network.network_address), str(network.broadcast_address))
+            if db.execute('SELECT 1 FROM ips WHERE address IN (?,?)', edges).fetchone():
+                raise Invalid('El segmento convertiría una IP reclamada en dirección de red o broadcast.')
+            db.execute("UPDATE identity_counters SET value=value+1 WHERE name='network_id'")
+            ident = db.execute("SELECT value FROM identity_counters WHERE name='network_id'").fetchone()[0]
+            db.execute('INSERT INTO networks(id, cidr, sort_key, name, created_at) VALUES(?,?,?,?,?)',
+                       (ident, str(network), int(network.network_address), name, now()))
+            return ident
 
-    def rename_network(self, network_id, name):
+    def _network_identity(self, db, network_id, expected_created_at, expected_revision):
+        row = db.execute('SELECT * FROM networks WHERE id=?', (_int_id(network_id, 'red'),)).fetchone()
+        if row is None:
+            raise Conflict('Esa red ya no existe. Sus IPs reclamadas se conservan.')
+        if ((expected_created_at is not _UNSET and expected_created_at != row['created_at']) or
+                (expected_revision is not _UNSET and
+                 (type(expected_revision) is not int or expected_revision != row['revision']))):
+            raise Conflict('La red cambió en otra pestaña. Revisa la versión actual antes de guardar.')
+        return row
+
+    def update_network(self, network_id, cidr, name, *, expected_created_at=_UNSET, expected_revision=_UNSET):
+        network = parse_network(cidr)
         name = _text({'name': name}, 'name', 60, label='nombre de la red')
         with self.transaction() as db:
-            if db.execute('UPDATE networks SET name=? WHERE id=?', (name, _int_id(network_id, 'red'))).rowcount != 1:
+            self._network_identity(db, network_id, expected_created_at, expected_revision)
+            others = [ipaddress.IPv4Network(r[0]) for r in db.execute('SELECT cidr FROM networks WHERE id<>?', (network_id,))]
+            if any(network.overlaps(other) for other in others):
+                raise Invalid('El segmento se solapa con otra red registrada.')
+            if network.num_addresses + sum(n.num_addresses for n in others) > MAX_ADDRESSES:
+                raise Invalid(f'Entre todas las redes no pueden pasar de {MAX_ADDRESSES} direcciones.')
+            if db.execute('SELECT 1 FROM ips WHERE address IN (?,?)',
+                          (str(network.network_address), str(network.broadcast_address))).fetchone():
+                raise Invalid('El segmento convertiría una IP reclamada en dirección de red o broadcast.')
+            db.execute('UPDATE networks SET cidr=?, sort_key=?, name=?, revision=revision+1 WHERE id=?',
+                       (str(network), int(network.network_address), name, network_id))
+
+    def rename_network(self, network_id, name, *, expected_created_at=_UNSET, expected_revision=_UNSET):
+        name = _text({'name': name}, 'name', 60, label='nombre de la red')
+        with self.transaction() as db:
+            self._network_identity(db, network_id, expected_created_at, expected_revision)
+            if db.execute('UPDATE networks SET name=?, revision=revision+1 WHERE id=?', (name, _int_id(network_id, 'red'))).rowcount != 1:
                 raise Invalid('Esa red ya no existe.')
 
-    def remove_network(self, network_id):
+    def remove_network(self, network_id, *, expected_created_at=_UNSET, expected_revision=_UNSET):
         with self.transaction() as db:
+            self._network_identity(db, network_id, expected_created_at, expected_revision)
             if db.execute('DELETE FROM networks WHERE id=?', (_int_id(network_id, 'red'),)).rowcount != 1:
                 raise Invalid('Esa red ya no existe.')
 
@@ -375,13 +429,17 @@ class Store:
             self._require_claimed(db, targets)
             db.executemany('UPDATE ips SET device_id=NULL WHERE address=?', [(a,) for a in targets])
 
-    def set_note(self, address, note):
+    def set_note(self, address, note, *, expected_note=_UNSET, expected_claimed_at=_UNSET):
         targets = parse_addresses(address)
         if len(targets) != 1:
             raise Invalid('La nota se guarda en una sola IP.')
         note = _text({'note': note}, 'note', 2000, label='nota')
         with self.transaction() as db:
             self._require_claimed(db, targets)
+            row = db.execute('SELECT note, claimed_at FROM ips WHERE address=?', (targets[0],)).fetchone()
+            if ((expected_note is not _UNSET and expected_note != row['note']) or
+                    (expected_claimed_at is not _UNSET and expected_claimed_at != row['claimed_at'])):
+                raise Conflict('La nota cambió en otra pestaña. Revisa la versión actual antes de guardar.')
             db.execute('UPDATE ips SET note=? WHERE address=?', (note, targets[0]))
 
     def _require_claimed(self, db, targets):
@@ -420,7 +478,7 @@ class Store:
         old = _text({'v': old}, 'v', limit, True, label)
         new = _text({'v': new}, 'v', limit, True, label)
         with self.transaction() as db:
-            db.execute(f'UPDATE devices SET {column}=? WHERE lower({column})=?', (new, old.lower()))
+            db.execute(f'UPDATE devices SET {column}=?, revision=revision+1 WHERE lower({column})=?', (new, old.lower()))
             db.execute(f'DELETE FROM {table} WHERE name_key=?', (old.casefold(),))
             self._remember(db, table, new)
 
@@ -503,22 +561,24 @@ class Store:
                 self._change_device_ips(db, device_id, targets, [])
             return device_id
 
-    def _require_device_identity(self, db, device_id, expected_created_at):
-        row = db.execute('SELECT created_at, platform FROM devices WHERE id=?', (device_id,)).fetchone()
+    def _require_device_identity(self, db, device_id, expected_created_at, expected_revision=_UNSET):
+        row = db.execute('SELECT created_at, platform, revision FROM devices WHERE id=?', (device_id,)).fetchone()
         if row is None:
             raise Invalid('Ese equipo ya no existe.')
         if expected_created_at is not _UNSET and expected_created_at != row['created_at']:
             raise Invalid('La identidad del equipo ha cambiado. Recarga la página antes de continuar.')
+        if expected_revision is not _UNSET and (type(expected_revision) is not int or expected_revision != row['revision']):
+            raise Conflict('El equipo cambió en otra pestaña. Revisa la versión actual antes de guardar.')
         return row
 
-    def update_device(self, device_id, fields, add=(), remove=(), *, expected_created_at=_UNSET):
+    def update_device(self, device_id, fields, add=(), remove=(), *, expected_created_at=_UNSET, expected_revision=_UNSET):
         device_id = _int_id(device_id, 'equipo')
         has_host = isinstance(fields, dict) and 'host' in fields
         host = fields.get('host') if has_host else None
         fields = _device_fields(fields)
         add, remove = _optional_addresses(add), _optional_addresses(remove)
         with self.transaction() as db:
-            self._require_device_identity(db, device_id, expected_created_at)
+            self._require_device_identity(db, device_id, expected_created_at, expected_revision)
             if fields['type'] != 'fisica' and db.execute('SELECT 1 FROM devices WHERE host_id=?', (device_id,)).fetchone():
                 raise Invalid('Tiene VMs dentro: muévelas a otra máquina antes de cambiar el tipo.')
             clash = db.execute('SELECT 1 FROM devices WHERE name_key=? AND id<>?',
@@ -537,7 +597,7 @@ class Store:
             if self._inherits_platform(db, host_id):
                 fields['platform'] = ''
             self._remember(db, 'platform_choices', fields['platform'])
-            db.execute('UPDATE devices SET name=?, name_key=?, type=?, os=?, note=?, platform=?, host_id=?, dhcp=? WHERE id=?',
+            db.execute('UPDATE devices SET name=?, name_key=?, type=?, os=?, note=?, platform=?, host_id=?, dhcp=?, revision=revision+1 WHERE id=?',
                        (fields['name'], fields['name'].casefold(), fields['type'], fields['os'], fields['note'],
                         fields['platform'], host_id, int(fields['dhcp']), device_id))
             if fields['dhcp']:
@@ -545,14 +605,16 @@ class Store:
             else:
                 self._change_device_ips(db, device_id, add, remove)
 
-    def delete_device(self, device_id, *, expected_created_at=_UNSET):
+    def delete_device(self, device_id, *, expected_created_at=_UNSET, expected_revision=_UNSET):
         device_id = _int_id(device_id, 'equipo')
         with self.transaction() as db:
-            device = self._require_device_identity(db, device_id, expected_created_at)
+            device = self._require_device_identity(db, device_id, expected_created_at, expected_revision)
             if device['platform']:
                 # Preserve the effective platform before ON DELETE SET NULL removes
                 # the physical host. Guests then keep it as their own platform.
-                db.execute('UPDATE devices SET platform=? WHERE host_id=?', (device['platform'], device_id))
+                db.execute('UPDATE devices SET platform=?, revision=revision+1 WHERE host_id=?', (device['platform'], device_id))
+            else:
+                db.execute('UPDATE devices SET revision=revision+1 WHERE host_id=?', (device_id,))
             db.execute('DELETE FROM devices WHERE id=?', (device_id,))
 
     # Observaciones (nunca tocan ips ni devices)
@@ -562,5 +624,11 @@ class Store:
             db.executemany(
                 'INSERT INTO observations(address, up, checked_at, last_up_at) VALUES(?1, ?2, ?3, CASE WHEN ?2 THEN ?3 END) '
                 'ON CONFLICT(address) DO UPDATE SET up=excluded.up, checked_at=excluded.checked_at, '
-                'last_up_at=CASE WHEN excluded.up THEN excluded.checked_at ELSE observations.last_up_at END',
+                "last_up_at=CASE WHEN excluded.up THEN excluded.checked_at ELSE observations.last_up_at END, error=''",
                 [(address, int(bool(up)), at) for address, up in results.items()])
+
+    def record_probe_errors(self, errors, at):
+        with self.transaction() as db:
+            db.executemany('INSERT INTO observations(address, up, checked_at, error) VALUES(?,0,?,?) '
+                           'ON CONFLICT(address) DO UPDATE SET checked_at=excluded.checked_at, error=excluded.error',
+                           [(address, at, str(error)[:1000]) for address, error in errors.items()])
