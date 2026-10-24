@@ -376,7 +376,7 @@ function summary(state) {
       ["use", "res", "occ", "free"].map((key) => el("i", { class: key + (ui.filter && ui.filter !== key ? " dim" : ""), style: { width: `${(c[key] / total) * 100}%` } })),
     ),
   );
-  for (const key of ["use", "res", "occ", "free"]) {
+  for (const key of [null, "use", "res", "occ", "free"]) {
     const on = ui.filter === key;
     box.append(
       el(
@@ -385,20 +385,22 @@ function summary(state) {
           type: "button",
           class: "cnt" + (on ? " on" : ""),
           "aria-pressed": on ? "true" : "false",
-          title: on ? t("Quitar filtro") : t("Resaltar en el mapa"),
+          title: key === null ? t("Mostrar todas las IPs") : on ? t("Quitar filtro") : t("Resaltar en el mapa"),
           onclick: () => {
             ui.filter = on ? null : key;
             render({ soft: true });
           },
         },
-        el("i", { class: `sw ${key}` }),
-        el("b", {}, String(c[key])),
+        key === null ? null : el("i", { class: `sw ${key}` }),
+        el("b", {}, String(key === null ? total : c[key])),
         " ",
-        t(STATUS_LABEL[key]),
+        key === null ? t("Todas") : t(STATUS_LABEL[key]),
       ),
     );
   }
   box.append(scanInfo(state));
+  // El filtro cambia el resaltado y aria-pressed aunque los contadores sean iguales.
+  box.dataset.sig = JSON.stringify([ui.filter, box.textContent]);
   return box;
 }
 

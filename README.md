@@ -30,7 +30,7 @@ Each registered network (`/22` to `/30`) is shown as a grid of ports, with a bar
 - Click a cell to claim it, assign it to a device (typing a new name creates the device), change or remove its device, add a note or release it.
 - Shift+click or drag to select several cells at once. On touch screens, use **Select several**.
 - **I need an IP** jumps to your first reserved address, or to the first free one nobody answered from in the last 7 days.
-- The counters work as filters, and the search box highlights cells by IP, device or note.
+- The counters work as filters. **All**, selected by default, clears the status filter with one click. The search box highlights cells by IP, device or note.
 - IPs you claimed outside every registered network are listed under **Other**.
 
 ### Devices

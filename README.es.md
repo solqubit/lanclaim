@@ -30,7 +30,7 @@ Cada red registrada (de `/22` a `/30`) se muestra como una cuadrícula de puerto
 - Haz clic en una celda para reclamarla, asignarla a un equipo (si escribes un nombre nuevo, el equipo se crea), cambiar o quitar su equipo, añadir una nota o liberarla.
 - Shift+clic o arrastrar selecciona varias celdas a la vez. En pantallas táctiles, usa **Seleccionar varias**.
 - **Necesito una IP** te lleva a tu primera dirección reservada o, si no hay, a la primera libre que no ha respondido en los últimos 7 días.
-- Los contadores funcionan como filtros, y el buscador resalta las celdas por IP, equipo o nota.
+- Los contadores funcionan como filtros. **Todas**, activa por defecto, quita el filtro de estado con un clic. El buscador resalta las celdas por IP, equipo o nota.
 - Las IPs reclamadas fuera de toda red registrada aparecen en **Otras**.
 
 ### Equipos
