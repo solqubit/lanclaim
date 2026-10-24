@@ -36,7 +36,8 @@ rollback() {
 }
 trap rollback ERR
 systemctl stop lanclaim
-PYTHONPATH="$PREVIOUS" /usr/bin/python3 -m lanclaim.server --data-dir "$DATA_ROOT" --backup "$BACKUP"
+# Never import application code before the backup: it may migrate or reset SQLite.
+/usr/bin/python3 "$RELEASE/lanclaim/backup.py" "$DATA_ROOT/lanclaim.sqlite3" "$BACKUP"
 chmod 0600 "$BACKUP"
 backup_ready=1
 switch_release "$RELEASE"

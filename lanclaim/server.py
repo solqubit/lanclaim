@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import __version__
+from .backup import backup_database
 from .db import Invalid, Store
 from .networks import local_networks
 from .scanner import Scanner
@@ -40,8 +41,9 @@ class Server(ThreadingHTTPServer):
             'ips/unassign': lambda d: store.unassign(d.get('addresses')),
             'ips/note': lambda d: store.set_note(d.get('address'), d.get('note', '')),
             'devices/create': lambda d: store.create_device(d, d.get('addresses')),
-            'devices/update': lambda d: store.update_device(d.get('id'), d, d.get('add'), d.get('remove')),
-            'devices/delete': lambda d: store.delete_device(d.get('id')),
+            'devices/update': lambda d: store.update_device(d.get('id'), d, d.get('add'), d.get('remove'),
+                                                           expected_created_at=d.get('created_at')),
+            'devices/delete': lambda d: store.delete_device(d.get('id'), expected_created_at=d.get('created_at')),
             'os/forget': lambda d: store.forget_os(d.get('name')),
             'platforms/forget': lambda d: store.forget_platform(d.get('name')),
             'platforms/rename': lambda d: store.rename_platform(d.get('name'), d.get('new')),
@@ -164,10 +166,10 @@ def main():
                         help='Segundos entre pings automáticos (0 los desactiva)')
     parser.add_argument('--backup', help='Crear una copia consistente y salir')
     args = parser.parse_args()
-    store = Store(Path(args.data_dir) / 'lanclaim.sqlite3')
     if args.backup:
-        store.backup(args.backup)
+        backup_database(Path(args.data_dir) / 'lanclaim.sqlite3', args.backup)
         return
+    store = Store(Path(args.data_dir) / 'lanclaim.sqlite3')
     server = Server((args.host, args.port), store, Scanner(store, interval=max(0, args.scan_interval)))
     server.scanner.start()
     print(f'LanClaim {__version__} — http://{args.host}:{server.server_port}', flush=True)

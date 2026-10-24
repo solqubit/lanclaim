@@ -98,6 +98,7 @@ This is a single-user tool without authentication, meant for a trusted private n
 python3 -m unittest discover -s tests -v
 node tests/test_model.mjs
 node tests/test_i18n.mjs
+node tests/test_autosave.mjs
 bash -n install.sh update.sh uninstall.sh scripts/common.sh
 
 # Disposable Linux integration environment; no host service changes:

@@ -4,6 +4,7 @@ import { act, editDevice, forgetOs, goto, markDirty, render, ui } from "./main.j
 import { agoText, byIp, deviceIps, deviceOf, effectivePlatform, ipRecord, ipStatus, minutesSince, networkHosts, isEdge, pingInfo } from "./model.js";
 import { osIcon } from "./icons.js";
 import { confirmButton, deviceInput, el, toast } from "./ui.js";
+import { createAutosave } from "./autosave.js";
 
 const PILL = { use: "Asignada", res: "Reservada", occ: "Ocupada por otro", free: "Libre" };
 
@@ -105,14 +106,16 @@ function noteBox(state, address) {
     oninput: markDirty,
   });
   // Se guarda sola al dejar de escribir y al salir del campo, sin repintar el panel.
-  let saved = ip.note;
+  const autosave = createAutosave({
+    initial: ip.note,
+    read: () => area.value,
+    write: (note) => act("ips/note", { address, note }, t("Nota guardada"), { quiet: true }),
+    onDirty: (dirty) => dirty ? area.setAttribute("data-dirty", "") : area.removeAttribute("data-dirty"),
+  });
   let timer;
   const save = () => {
     clearTimeout(timer);
-    const note = area.value.trim();
-    if (note === saved) return area.removeAttribute("data-dirty");
-    saved = note;
-    act("ips/note", { address, note }, t("Nota guardada"), { quiet: true }).then((ok) => ok && area.removeAttribute("data-dirty"));
+    return autosave.flush();
   };
   area.addEventListener("input", () => {
     clearTimeout(timer);

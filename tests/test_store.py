@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lanclaim.db import Invalid, Store, parse_addresses
+from lanclaim.db import Invalid, SCHEMA_VERSION, Store, parse_addresses
 
 V5_SCHEMA = """
 CREATE TABLE networks (id INTEGER PRIMARY KEY, cidr TEXT NOT NULL UNIQUE, sort_key INTEGER NOT NULL,
@@ -45,7 +45,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual({k: state[k] for k in ('networks', 'ips', 'devices', 'observations', 'os_choices')},
                          {'networks': [], 'ips': [], 'devices': [], 'observations': {}, 'os_choices': []})
         db = sqlite3.connect(old)
-        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
+        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], SCHEMA_VERSION)
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         db.close()
         self.assertNotIn('machines', tables)
@@ -148,6 +148,54 @@ class StoreTests(unittest.TestCase):
         glpi = self.device_named('glpi')
         self.assertEqual((glpi['host_id'], glpi['platform']), (None, 'Proxmox VE'))
         self.assertEqual(self.ip('192.168.1.20')['device_id'], glpi['id'])
+
+    def test_deleting_host_preserves_inherited_platform_and_other_hosts(self):
+        host = self.store.create_device({'name': 'Host', 'type': 'fisica', 'platform': 'Vates XCP-ng'})
+        guest = self.store.create_device({'name': 'Guest', 'type': 'vm', 'host': {'id': host}}, ['192.0.2.10'])
+        other = self.store.create_device({'name': 'Other host', 'type': 'fisica', 'platform': 'KVM'})
+        self.store.create_device({'name': 'Other guest', 'type': 'vm', 'host': {'id': other}})
+        before = self.store.state()['ips']
+        self.store.delete_device(host)
+        self.assertEqual((self.device_named('Guest')['host_id'], self.device_named('Guest')['platform']), (None, 'Vates XCP-ng'))
+        self.assertEqual((self.device_named('Other guest')['host_id'], self.device_named('Other guest')['platform']), (other, ''))
+        self.assertEqual(self.store.state()['ips'], before)
+        self.assertEqual(self.ip('192.0.2.10')['device_id'], guest)
+
+    def test_deleted_device_ids_are_not_reused_across_restart(self):
+        original = self.store.create_device({'name': 'Original', 'type': 'vm'})
+        self.store.delete_device(original)
+        self.store = Store(self.path)
+        replacement = self.store.create_device({'name': 'Replacement', 'type': 'vm'})
+        self.assertGreater(replacement, original)
+        before = self.store.state()
+        with self.assertRaises(Invalid):
+            self.store.update_device(original, {'name': 'Stale form', 'type': 'vm'})
+        with self.assertRaises(Invalid):
+            self.store.delete_device(original)
+        self.assertEqual(self.store.state(), before)
+
+    def test_wrong_identity_cannot_update_or_delete_a_device(self):
+        ident = self.store.create_device({'name': 'Keep', 'type': 'vm'})
+        before = self.store.state()
+        for token in (None, '', 'another-creation-time'):
+            with self.assertRaises(Invalid):
+                self.store.update_device(ident, {'name': 'Changed'}, expected_created_at=token)
+            with self.assertRaises(Invalid):
+                self.store.delete_device(ident, expected_created_at=token)
+        self.assertEqual(self.store.state(), before)
+
+    def test_v10_migration_keeps_data_and_seeds_identity_counter(self):
+        self.store.create_device({'name': 'Existing host', 'type': 'fisica', 'platform': 'KVM'})
+        self.store.create_device({'name': 'Existing guest', 'type': 'vm', 'host': {'id': 1}}, ['192.0.2.10'])
+        before = self.store.state()
+        with self.store.transaction() as db:
+            db.execute('DROP TABLE identity_counters')
+            db.execute('PRAGMA user_version=10')
+        self.store = Store(self.path)
+        self.assertEqual(self.store.state(), before)
+        self.assertGreater(self.store.create_device({'name': 'New', 'type': 'vm'}), 2)
+        with self.store.connect() as db:
+            self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
 
     def test_vm_inherits_platform_from_its_machine(self):
         pc = self.store.create_device({'name': 'PC SOL', 'type': 'fisica', 'platform': 'VMware Workstation Pro'})

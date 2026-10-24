@@ -33,12 +33,30 @@ assert result['observations']['127.0.0.1']['up'] is True, result
 PY
 # An update must repair existing installations whose unit predates ICMP grants.
 sed -i '/^CapabilityBoundingSet=/d; /^AmbientCapabilities=/d' /etc/systemd/system/lanclaim.service
+# Mimic a previous schema. The backup must retain v10, not trigger v11's migration.
+systemctl stop lanclaim
+python3 - <<'PY'
+import sqlite3
+db = sqlite3.connect('/var/lib/lanclaim/lanclaim.sqlite3')
+db.execute('DROP TABLE identity_counters')
+db.execute('PRAGMA user_version=10')
+db.commit()
+db.close()
+PY
 bash update.sh
 python3 - <<'PY'
+import sqlite3
+from pathlib import Path
 from lanclaim.db import Store
 s = Store('/var/lib/lanclaim/lanclaim.sqlite3').state()
 assert len(s['ips']) == 3 and s['devices'][0]['name'] == 'Lifecycle test'
 assert [i['address'] for i in s['ips'] if i['device_id']] == ['10.20.30.10']
+backup = max(Path('/var/lib/lanclaim/backups').glob('before-*.sqlite3'), key=lambda p: p.stat().st_mtime_ns)
+db = sqlite3.connect(backup)
+assert db.execute('PRAGMA user_version').fetchone()[0] == 10
+assert db.execute('SELECT name FROM devices').fetchone()[0] == 'Lifecycle test'
+assert db.execute("SELECT count(*) FROM sqlite_master WHERE name='identity_counters'").fetchone()[0] == 0
+db.close()
 PY
 # Simulate a release that commits incompatible data and then fails at startup.
 cp lanclaim/server.py /tmp/server-original.py
@@ -46,7 +64,9 @@ python3 - <<'PY'
 from pathlib import Path
 p = Path('lanclaim/server.py')
 s = p.read_text()
-s = s.replace("    if args.backup:\n", "    if not args.backup:\n        with store.transaction() as db:\n            db.execute(\"UPDATE devices SET name='BROKEN'\")\n        raise RuntimeError('simulated failed migration')\n    if args.backup:\n", 1)
+needle = "    store = Store(Path(args.data_dir) / 'lanclaim.sqlite3')\n"
+assert needle in s
+s = s.replace(needle, needle + "    with store.transaction() as db:\n        db.execute(\"UPDATE devices SET name='BROKEN'\")\n        db.execute('PRAGMA user_version=12')\n    raise RuntimeError('simulated failed migration')\n", 1)
 p.write_text(s)
 PY
 if bash update.sh; then echo 'Expected update failure' >&2; exit 1; fi
@@ -69,7 +89,8 @@ base = 'http://127.0.0.1:8080/api/'
 state = json.load(urllib.request.urlopen(base + 'state'))
 assert len(state['ips']) == 3 and state['devices'][0]['name'] == 'Lifecycle test'
 # Deleting a device keeps its IPs claimed as reserved.
-request = urllib.request.Request(base + 'devices/delete', json.dumps({'id': state['devices'][0]['id']}).encode(),
+device = state['devices'][0]
+request = urllib.request.Request(base + 'devices/delete', json.dumps({'id': device['id'], 'created_at': device['created_at']}).encode(),
     {'Content-Type': 'application/json', 'X-CSRF-Token': state['csrf']})
 after = json.load(urllib.request.urlopen(request))
 assert after['devices'] == [] and len(after['ips']) == 3

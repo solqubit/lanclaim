@@ -299,6 +299,8 @@ export const EN = {
   "Crear equipo": "Create device",
   "＋ Añadir una IP reservada ({n})": "＋ Add a reserved IP ({n})",
   "No tienes IPs reservadas libres": "You have no free reserved IPs",
+  "La identidad del equipo ha cambiado. Recarga la página antes de continuar.":
+    "The device identity has changed. Reload the page before continuing.",
 };
 
 export function lang() {

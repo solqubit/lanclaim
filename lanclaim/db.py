@@ -5,8 +5,10 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from .backup import backup_database
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
+_UNSET = object()
 MAX_ADDRESSES = 4096
 MIN_PREFIX, MAX_PREFIX = 22, 30
 DEVICE_TYPES = ('vm', 'fisica', 'contenedor', 'otro')
@@ -73,6 +75,11 @@ UPDATE devices SET platform = ''
     # v10: ajustes guardados desde la interfaz (p. ej. el ciclo del ping automático).
     10: """
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+""",
+    # v11: identities survive deletions so old tabs cannot target a new device.
+    11: """
+CREATE TABLE identity_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL CHECK(value >= 0));
+INSERT INTO identity_counters VALUES('device_id', (SELECT COALESCE(MAX(id), 0) FROM devices));
 """,
 }
 
@@ -251,12 +258,7 @@ class Store:
                 raise
 
     def backup(self, target):
-        with self.connect() as source:
-            destination = sqlite3.connect(target)
-            try:
-                source.backup(destination)
-            finally:
-                destination.close()
+        backup_database(self.path, target)
 
     # Lectura
 
@@ -265,7 +267,7 @@ class Store:
             networks = [dict(r) for r in db.execute('SELECT id, cidr, name FROM networks ORDER BY sort_key')]
             ips = [dict(r) for r in db.execute('SELECT address, device_id, note, claimed_at FROM ips ORDER BY sort_key')]
             devices = [{**dict(r), 'dhcp': bool(r['dhcp'])} for r in db.execute(
-                'SELECT id, name, type, os, note, host_id, platform, dhcp FROM devices ORDER BY name_key')]
+                'SELECT id, name, type, os, note, host_id, platform, dhcp, created_at FROM devices ORDER BY name_key')]
             rows = db.execute('SELECT address, up, checked_at, last_up_at FROM observations').fetchall()
             watched = set(self._watched(db))
             os_choices = [r[0] for r in db.execute('SELECT name FROM os_choices ORDER BY used_at DESC, rowid DESC')]
@@ -461,10 +463,13 @@ class Store:
         self._remember(db, 'os_choices', fields['os'])
         self._remember(db, 'platform_choices', fields['platform'])
         try:
-            return db.execute('INSERT INTO devices(name, name_key, type, os, note, platform, host_id, dhcp, created_at) '
-                              'VALUES(?,?,?,?,?,?,?,?,?)',
-                              (fields['name'], fields['name'].casefold(), fields['type'], fields['os'],
-                               fields['note'], fields['platform'], host_id, int(fields.get('dhcp', False)), now())).lastrowid
+            db.execute("UPDATE identity_counters SET value=value+1 WHERE name='device_id'")
+            device_id = db.execute("SELECT value FROM identity_counters WHERE name='device_id'").fetchone()[0]
+            db.execute('INSERT INTO devices(id, name, name_key, type, os, note, platform, host_id, dhcp, created_at) '
+                              'VALUES(?,?,?,?,?,?,?,?,?,?)',
+                              (device_id, fields['name'], fields['name'].casefold(), fields['type'], fields['os'],
+                               fields['note'], fields['platform'], host_id, int(fields.get('dhcp', False)), now()))
+            return device_id
         except sqlite3.IntegrityError:
             raise Invalid(f'Ya existe un equipo llamado «{fields["name"]}».') from None
 
@@ -498,15 +503,22 @@ class Store:
                 self._change_device_ips(db, device_id, targets, [])
             return device_id
 
-    def update_device(self, device_id, fields, add=(), remove=()):
+    def _require_device_identity(self, db, device_id, expected_created_at):
+        row = db.execute('SELECT created_at, platform FROM devices WHERE id=?', (device_id,)).fetchone()
+        if row is None:
+            raise Invalid('Ese equipo ya no existe.')
+        if expected_created_at is not _UNSET and expected_created_at != row['created_at']:
+            raise Invalid('La identidad del equipo ha cambiado. Recarga la página antes de continuar.')
+        return row
+
+    def update_device(self, device_id, fields, add=(), remove=(), *, expected_created_at=_UNSET):
         device_id = _int_id(device_id, 'equipo')
         has_host = isinstance(fields, dict) and 'host' in fields
         host = fields.get('host') if has_host else None
         fields = _device_fields(fields)
         add, remove = _optional_addresses(add), _optional_addresses(remove)
         with self.transaction() as db:
-            if db.execute('SELECT 1 FROM devices WHERE id=?', (device_id,)).fetchone() is None:
-                raise Invalid('Ese equipo ya no existe.')
+            self._require_device_identity(db, device_id, expected_created_at)
             if fields['type'] != 'fisica' and db.execute('SELECT 1 FROM devices WHERE host_id=?', (device_id,)).fetchone():
                 raise Invalid('Tiene VMs dentro: muévelas a otra máquina antes de cambiar el tipo.')
             clash = db.execute('SELECT 1 FROM devices WHERE name_key=? AND id<>?',
@@ -533,10 +545,15 @@ class Store:
             else:
                 self._change_device_ips(db, device_id, add, remove)
 
-    def delete_device(self, device_id):
+    def delete_device(self, device_id, *, expected_created_at=_UNSET):
+        device_id = _int_id(device_id, 'equipo')
         with self.transaction() as db:
-            if db.execute('DELETE FROM devices WHERE id=?', (_int_id(device_id, 'equipo'),)).rowcount != 1:
-                raise Invalid('Ese equipo ya no existe.')
+            device = self._require_device_identity(db, device_id, expected_created_at)
+            if device['platform']:
+                # Preserve the effective platform before ON DELETE SET NULL removes
+                # the physical host. Guests then keep it as their own platform.
+                db.execute('UPDATE devices SET platform=? WHERE host_id=?', (device['platform'], device_id))
+            db.execute('DELETE FROM devices WHERE id=?', (device_id,))
 
     # Observaciones (nunca tocan ips ni devices)
 
