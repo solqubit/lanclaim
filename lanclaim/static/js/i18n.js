@@ -88,6 +88,8 @@ export const EN = {
   "ocupadas por otros": "used by others",
   "libres": "free",
   "Quitar filtro": "Clear filter",
+  "Todas": "All",
+  "Mostrar todas las IPs": "Show all IPs",
   "{a} asignadas, {b} reservadas, {c} ocupadas, {d} libres": "{a} assigned, {b} reserved, {c} used by others, {d} free",
   "Resaltar en el mapa": "Highlight on the map",
   "IPs tuyas que no pertenecen a ninguna red registrada. Puedes asignarlas o liberarlas igual que en el mapa.":
