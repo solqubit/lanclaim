@@ -93,7 +93,8 @@ class ScannerTests(unittest.TestCase):
         self.scanner.scan_now()
         status = wait_idle(self.scanner)
         self.assertEqual(status['error'], PING_PERMISSION_ERROR)
-        self.assertEqual(self.store.state()['observations'], {})
+        self.assertGreater(status['failed'], 0)
+        self.assertTrue(all(o['error'] == PING_PERMISSION_ERROR for o in self.store.state()['observations'].values()))
         self.scanner.probe = self.fake
         self.scanner.scan_now()
         self.assertEqual(wait_idle(self.scanner)['error'], '')
@@ -107,10 +108,10 @@ class ScannerTests(unittest.TestCase):
         self.scanner.probe = flaky
         self.scanner.scan_now()
         status = wait_idle(self.scanner)
-        self.assertEqual((status['done'], status['error']), (6, ''))
+        self.assertEqual((status['done'], status['checked'], status['failed'], status['error']), (6, 5, 1, PING_NETWORK_ERROR))
         obs = self.store.state()['observations']
-        self.assertNotIn('10.0.0.3', obs)
-        self.assertEqual(len(obs), 5)
+        self.assertEqual(obs['10.0.0.3']['error'], PING_NETWORK_ERROR)
+        self.assertEqual(len(obs), 6)
 
     def test_unexpected_error_is_generic(self):
         def crash(address):

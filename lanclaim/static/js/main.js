@@ -3,7 +3,8 @@ import { load, post } from "./api.js";
 import { renderDevices } from "./devices.js";
 import { lang, setLang, t } from "./i18n.js";
 import { renderRed } from "./map.js";
-import { networkOf } from "./model.js";
+import { agoText, networkOf } from "./model.js";
+import { hasUnstoredDrafts } from "./drafts.js";
 import { toast } from "./ui.js";
 
 export const ui = {
@@ -20,6 +21,10 @@ export const ui = {
   editNet: null, // id de la red en edición
   multi: false, // modo táctil de selección múltiple
   dismissedError: "",
+  mapMode: "map",
+  offline: false,
+  lastLoaded: null,
+  pendingWrites: 0,
 };
 
 export let state = null;
@@ -30,7 +35,7 @@ export function isBusy(node) {
   if (!node) return false;
   const active = document.activeElement;
   const focused = active && node.contains(active) && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
-  return focused || !!node.querySelector("[data-dirty]");
+  return focused || node.matches("[data-dirty]") || !!node.querySelector("[data-dirty]");
 }
 
 export function markDirty(event) {
@@ -53,10 +58,17 @@ function renderChrome() {
   q.setAttribute("aria-label", q.placeholder);
   document.getElementById("lang").value = lang();
   document.title = ui.view === "red" ? `${t("Red")} · LanClaim` : `${t("Equipos")} · LanClaim`;
+  const connection = document.getElementById("connection-status");
+  connection.hidden = !ui.offline;
+  document.getElementById("connection-message").textContent = ui.lastLoaded
+    ? t("Sin conexión con el servidor. Se muestran datos de {ago}.", { ago: agoText(Math.round((Date.now() - ui.lastLoaded) / 60000)) })
+    : t("Sin conexión con el servidor.");
+  document.getElementById("connection-retry").textContent = t("Reintentar");
 }
 
 function ensureNet() {
   if (!state) return;
+  if (ui.editNet != null && !state.networks.some((n) => n.id === ui.editNet)) ui.editNet = null;
   const valid =
     ui.net === "outside" ? state.ips.some((ip) => !networkOf(state, ip.address)) : state.networks.some((n) => n.cidr === ui.net);
   if (!valid) ui.net = state.networks[0]?.cidr || (state.ips.some((ip) => !networkOf(state, ip.address)) ? "outside" : null);
@@ -75,21 +87,27 @@ export function render(opts = {}) {
 // Las mutaciones se encadenan: ninguna se descarta aunque llegue mientras otra está en curso.
 // quiet: actualiza el estado sin repintar (p. ej. la nota que se está escribiendo).
 let queue = Promise.resolve();
-export function act(path, body, okMessage, { quiet = false } = {}) {
+export function act(path, body, okMessage, { quiet = false, onError = () => {} } = {}) {
   const run = async () => {
     document.body.classList.add("busy");
+    ui.pendingWrites++;
     try {
       state = await post(path, body);
+      ui.offline = false;
+      ui.lastLoaded = Date.now();
+      renderChrome();
       if (okMessage) toast(typeof okMessage === "function" ? okMessage(state) : okMessage);
       if (!quiet) render();
       if (state.scan.running) pollScan();
       return true;
     } catch (error) {
       toast(error.message, "error");
-      refresh();
+      await refresh();
+      onError(error);
       return false;
     } finally {
       document.body.classList.remove("busy");
+      ui.pendingWrites--;
     }
   };
   const result = queue.then(run);
@@ -135,20 +153,33 @@ export function editDevice(id, address = null) {
 
 // Hash: #red/192.168.1.0-24/192.168.1.43 · #red/otras · #equipos · #equipos/12
 function writeHash() {
-  let hash = typeof ui.editDev === "number" ? `#equipos/${ui.editDev}` : "#equipos";
+  let hash = typeof ui.editDev === "number" ? `#equipos/${ui.editDev}` : ui.editDev === "new" ? "#equipos/new" : ui.editDev === "labels" ? "#equipos/labels" : "#equipos";
+  if (ui.editDev === "new" && ui.newDevAddress) hash += "?address=" + encodeURIComponent(ui.newDevAddress);
   if (ui.view === "red") {
     const net = ui.net === "outside" ? "otras" : ui.net ? ui.net.replace("/", "-") : "";
     const one = ui.sel.size === 1 ? [...ui.sel][0] : "";
     hash = ["#red", net, one].filter(Boolean).join("/");
+    const query = new URLSearchParams();
+    if (ui.mapMode === "list") query.set("mode", "list");
+    if (ui.editNet != null) query.set("edit", String(ui.editNet));
+    if (ui.addingNet) query.set("add", "1");
+    if (query.size) hash += "?" + query;
   }
   if (location.hash !== hash) history.replaceState(null, "", hash);
 }
 
 function readHash() {
-  const [view, net, address] = location.hash.replace(/^#/, "").split("/");
+  const [route, query] = location.hash.replace(/^#/, "").split("?");
+  const [view, net, address] = route.split("/");
+  const params = new URLSearchParams(query || "");
+  ui.mapMode = params.get("mode") === "list" ? "list" : "map";
+  ui.editNet = /^\d+$/.test(params.get("edit") || "") ? Number(params.get("edit")) : null;
+  ui.addingNet = params.get("add") === "1";
   ui.view = view === "equipos" ? "equipos" : "red";
   if (ui.view === "equipos") {
-    ui.editDev = /^\d+$/.test(net || "") ? Number(net) : null;
+    ui.editDev = net === "new" || net === "labels" ? net : /^\d+$/.test(net || "") ? Number(net) : null;
+    const initialAddress = params.get("address");
+    ui.newDevAddress = initialAddress && /^\d{1,3}(\.\d{1,3}){3}$/.test(initialAddress) ? initialAddress : null;
     return;
   }
   if (net) ui.net = net === "otras" ? "outside" : net.replace("-", "/");
@@ -159,8 +190,12 @@ function readHash() {
 export async function refresh(opts = { soft: true }) {
   try {
     state = await load();
+    ui.offline = false;
+    ui.lastLoaded = Date.now();
     render(opts);
   } catch (error) {
+    ui.offline = true;
+    renderChrome();
     if (!state) showFatal(error.message);
   }
 }
@@ -196,6 +231,13 @@ function showFatal(message) {
 
 function boot() {
   readHash();
+  document.getElementById("connection-retry").addEventListener("click", () => refresh());
+  addEventListener("beforeunload", (event) => {
+    if (ui.pendingWrites || hasUnstoredDrafts()) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
   document.getElementById("lang").addEventListener("change", (e) => {
     setLang(e.target.value);
     render();
@@ -224,7 +266,7 @@ function boot() {
         document.activeElement.blur();
       }
       // Un formulario con cambios sin guardar no se descarta con Escape: hay que pulsar Cancelar.
-      if (root().querySelector(".dev-form [data-dirty], #net-form [data-dirty]")) {
+      if (root().querySelector(".dev-form[data-dirty], .dev-form [data-dirty], #net-form[data-dirty], #net-form [data-dirty]")) {
         toast(t("Tienes cambios sin guardar. Pulsa Cancelar para descartarlos."));
         return;
       }

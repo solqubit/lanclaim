@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: '20'
       - run: for f in lanclaim/static/js/*.js; do node --check "$f"; done
-      - run: node tests/test_model.mjs && node tests/test_i18n.mjs && node tests/test_autosave.mjs
+      - run: node tests/test_model.mjs && node tests/test_i18n.mjs && node tests/test_autosave.mjs && node tests/test_drafts.mjs && node tests/test_api.mjs
       - run: bash -n install.sh update.sh uninstall.sh scripts/common.sh
       - run: shellcheck -x -e SC1091 install.sh update.sh uninstall.sh scripts/common.sh tests/linux/lifecycle.sh
   lifecycle:

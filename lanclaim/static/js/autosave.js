@@ -1,5 +1,5 @@
 // Keep the last acknowledged value separate from a write that may fail.
-export function createAutosave({ initial, read, write, onDirty }) {
+export function createAutosave({ initial, read, write, onDirty, onStatus = () => {} }) {
   let saved = initial;
   let pending = null;
   let queued = false;
@@ -7,6 +7,7 @@ export function createAutosave({ initial, read, write, onDirty }) {
 
   async function persist(value) {
     let ok = false;
+    onStatus("saving");
     try {
       ok = await write(value);
       if (ok) saved = value;
@@ -15,6 +16,7 @@ export function createAutosave({ initial, read, write, onDirty }) {
     }
     pending = null;
     onDirty(dirty());
+    onStatus(ok ? dirty() ? "draft" : "saved" : "failed");
     const again = queued;
     queued = false;
     return ok && again && dirty() ? flush() : ok;
@@ -27,6 +29,7 @@ export function createAutosave({ initial, read, write, onDirty }) {
     }
     if (!dirty()) {
       onDirty(false);
+      onStatus("saved");
       return Promise.resolve(true);
     }
     onDirty(true);
@@ -35,5 +38,5 @@ export function createAutosave({ initial, read, write, onDirty }) {
     return pending;
   }
 
-  return { flush };
+  return { flush, isDirty: dirty, isPending: () => !!pending };
 }

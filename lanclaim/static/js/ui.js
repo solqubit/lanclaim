@@ -122,7 +122,7 @@ export function choicePicker(saved, input, onForget, iconFor = null) {
 
 let inputSeq = 0;
 // Campo de equipo: elige uno existente o escribe un nombre nuevo (con su tipo y SO).
-export function deviceInput(state, { placeholder, value = "", onForgetOs } = {}) {
+export function deviceInput(state, { placeholder, value = "", initialType = "vm", initialOs = "", onDirty = () => {}, onForgetOs } = {}) {
   const id = `dev-${++inputSeq}`;
   const list = el("datalist", { id: `${id}-list` }, state.devices.map((d) => el("option", { value: d.name })));
   const input = el("input", {
@@ -137,9 +137,9 @@ export function deviceInput(state, { placeholder, value = "", onForgetOs } = {})
   const type = el(
     "select",
     { class: "in", "aria-label": t("Tipo") },
-    ["vm", "fisica", "contenedor", "otro"].map((k) => el("option", { value: k }, typeLabel(k))),
+    ["vm", "fisica", "contenedor", "otro"].map((k) => el("option", { value: k, selected: k === initialType }, typeLabel(k))),
   );
-  const os = osSelect("", { compact: true });
+  const os = osSelect(initialOs, { compact: true, onDirty });
   const extra = el("div", { class: "new-device", hidden: true }, type, os.node);
   const hint = el("div", { class: "hint" });
   const sync = () => {
@@ -153,10 +153,13 @@ export function deviceInput(state, { placeholder, value = "", onForgetOs } = {})
         : t("Se creará el equipo “{name}”", { name });
   };
   input.addEventListener("input", sync);
+  input.addEventListener("input", onDirty);
+  type.addEventListener("change", onDirty);
   sync();
   return {
     node: el("div", { class: "device-input" }, input, list, hint, extra),
     input,
+    snapshot: () => ({ name: input.value, type: type.value, os: os.read() }),
     read() {
       const name = input.value.trim();
       if (!name) return null;

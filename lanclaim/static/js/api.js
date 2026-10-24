@@ -4,22 +4,22 @@ import { t } from "./i18n.js";
 let csrf = "";
 
 async function readJson(response) {
-  try {
-    return await response.json();
-  } catch {
-    return {};
-  }
+  return response.json();
 }
 
 async function request(path, options) {
   let response;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
   try {
-    response = await fetch(path, { cache: "no-store", ...options });
+    response = await fetch(path, { cache: "no-store", ...options, signal: controller.signal });
+    const data = await readJson(response);
+    return { response, data };
   } catch {
     throw new Error(t("No se pudo conectar con el servidor."));
+  } finally {
+    clearTimeout(timer);
   }
-  const data = await readJson(response);
-  return { response, data };
 }
 
 export async function load() {
@@ -45,7 +45,11 @@ export async function post(path, body = {}, retry = true) {
     await load();
     return post(path, body, false);
   }
-  if (!response.ok) throw new Error(data.error ? t(data.error) : t("La operación falló."));
+  if (!response.ok) {
+    const error = new Error(data.error ? t(data.error) : t("La operación falló."));
+    error.status = response.status;
+    throw error;
+  }
   csrf = data.csrf || csrf;
   return data;
 }

@@ -1,7 +1,8 @@
 // Vista Red: barra de redes, resumen, cuadrícula (o lista "Otras") y selección.
 import { suggestions } from "./api.js";
 import { t } from "./i18n.js";
-import { act, flash, isBusy, markDirty, pollScan, render, state as liveState, ui } from "./main.js";
+import { act, isBusy, markDirty, pollScan, render, state as liveState, ui } from "./main.js";
+import { clearDraft, readDraft, saveDraft } from "./drafts.js";
 import {
   agoText,
   byIp,
@@ -16,12 +17,12 @@ import {
   networkHosts,
   outsideIps,
   pingInfo,
-  suggestIp,
+  pingLabel,
 } from "./model.js";
 import { renderPanel } from "./panel.js";
-import { confirmButton, el, toast } from "./ui.js";
+import { confirmButton, el } from "./ui.js";
 
-const STATUS_LABEL = { use: "asignadas", res: "reservadas", occ: "ocupadas por otros", free: "libres" };
+const STATUS_LABEL = { use: "asignadas", res: "reservadas", occ: "ocupadas por otros", free: "sin actividad confirmada" };
 
 export function renderRed(root, state, ui, opts = {}) {
   const oldNetForm = root.querySelector("#net-form");
@@ -31,14 +32,14 @@ export function renderRed(root, state, ui, opts = {}) {
     return;
   }
   const old = root.querySelector("section.red");
-  const key = `${ui.net}|${ui.addingNet}|${ui.editNet}`;
+  const key = `${ui.net}|${ui.addingNet}|${ui.editNet}|${ui.mapMode}`;
   // Refresco suave (ping periódico, otra pestaña): solo se cambia lo que cambió,
   // para no perder clics, foco, hover ni formularios abiertos.
   if (opts.soft && old && old.dataset.key === key) {
     swap(old.querySelector(".bar"), networkBar(state));
     swap(old.querySelector("#banner-slot"), bannerSlot(state));
     swap(old.querySelector("#sum"), ui.net === "outside" ? outsideSummary(state) : summary(state));
-    if (ui.net === "outside") swap(old.querySelector(".iplist"), outsideList(state));
+    if (ui.net === "outside" || ui.mapMode === "list") patchList(old.querySelector(".iplist"), state);
     else patchGrid(old.querySelector(".grids"), state);
     const oldPanel = old.querySelector("#panel");
     if (!isBusy(oldPanel)) swap(oldPanel, renderPanel(state, ui));
@@ -55,7 +56,7 @@ export function renderRed(root, state, ui, opts = {}) {
     el(
       "div",
       { class: "layout" + (ui.sel.size ? " has-sel" : "") },
-      el("div", { class: "mapwrap", id: "mapwrap" }, ui.net === "outside" ? outsideList(state) : grid(state), footer(state)),
+      el("div", { class: "mapwrap", id: "mapwrap" }, ui.net === "outside" || ui.mapMode === "list" ? addressList(state) : grid(state), footer(state)),
       renderPanel(state, ui),
     ),
   );
@@ -80,6 +81,7 @@ function patchGrid(wrap, state) {
     if (cell.className.replace(" flash", "") !== cls) cell.className = cls;
     const title = cellTitle(state, address, cidr);
     if (cell.title !== title) cell.title = title;
+    cell.setAttribute("aria-pressed", String(ui.sel.has(address)));
     const dot = cell.disabled ? null : cellDot(state, address);
     const oldDot = cell.querySelector(".dot");
     if ((oldDot?.className || "") !== (dot?.className || "")) {
@@ -119,23 +121,6 @@ function networkBar(state) {
           n.name ? el("span", { class: "net-name" }, n.name) : null,
           el("b", {}, n.cidr),
         ),
-        on
-          ? el(
-              "button",
-              {
-                type: "button",
-                class: "net-edit",
-                title: t("Editar red"),
-                "aria-label": t("Editar red"),
-                onclick: () => {
-                  ui.editNet = ui.editNet === n.id ? null : n.id;
-                  ui.addingNet = false;
-                  render();
-                },
-              },
-              "⋯",
-            )
-          : null,
       ),
     );
   }
@@ -183,6 +168,20 @@ function networkBar(state) {
     ),
   );
   bar.append(el("span", { class: "spacer" }));
+  const current = state.networks.find((n) => n.cidr === ui.net);
+  if (current) bar.append(el("button", {
+    type: "button", class: "btn", onclick: () => {
+      ui.editNet = ui.editNet === current.id ? null : current.id;
+      ui.addingNet = false;
+      render();
+    },
+  }, t("Administrar red")));
+  if (ui.net !== "outside") bar.append(el("div", { class: "view-switch", role: "group", "aria-label": t("Vista de red") },
+    ["map", "list"].map((mode) => el("button", {
+      type: "button", class: "btn" + (ui.mapMode === mode ? " on" : ""), "aria-pressed": String(ui.mapMode === mode),
+      onclick: () => { ui.mapMode = mode; render(); },
+    }, mode === "map" ? t("Mapa") : t("Lista"))),
+  ));
   bar.append(
     el(
       "button",
@@ -190,60 +189,66 @@ function networkBar(state) {
       ui.multi ? t("Selección múltiple activa") : t("Seleccionar varias"),
     ),
   );
-  bar.append(
-    el(
-      "button",
-      { type: "button", class: "btn primary", disabled: ui.net === "outside", onclick: () => needIp(liveState) },
-      "✦ ",
-      t("Necesito una IP"),
-    ),
-  );
   return bar;
-}
-
-function needIp(state) {
-  const pick = suggestIp(state, ui.net);
-  if (!pick) {
-    toast(t("No quedan IPs libres en esta red."), "error");
-    return;
-  }
-  ui.sel = new Set([pick.address]);
-  ui.anchor = pick.address;
-  ui.filter = null;
-  render();
-  flash(pick.address);
-  toast(
-    pick.reason === "reserved"
-      ? t("Te sugiero {ip}: es tuya y está reservada.", { ip: pick.address })
-      : t("Te sugiero {ip}: libre y nadie respondió en 7 días.", { ip: pick.address }),
-  );
 }
 
 // ---------- Formulario de red (añadir / editar) ----------
 
 function networkForm(state, { firstRun = false } = {}) {
   const editing = ui.editNet != null ? state.networks.find((n) => n.id === ui.editNet) : null;
+  const draftKey = editing ? `network:${editing.id}:${editing.created_at}` : "network:new";
+  const draft = readDraft(draftKey);
+  let revision = draft?.revision ?? editing?.revision;
+  const feedback = el("p", { class: "save-state", role: "status" }, draft ? t("Borrador restaurado") : "");
+  const conflict = el("div", { class: "conflict-box", hidden: true });
   const cidr = el("input", {
     class: "in mono",
     placeholder: "192.168.1.0/24",
-    value: editing ? editing.cidr : "",
-    disabled: !!editing,
+    value: draft?.cidr ?? editing?.cidr ?? "",
     "aria-label": t("Red (CIDR)"),
     oninput: markDirty,
   });
   const name = el("input", {
     class: "in",
     placeholder: t("Nombre (opcional), p. ej. Casa"),
-    value: editing ? editing.name : "",
+    value: draft?.name ?? editing?.name ?? "",
     maxlength: 60,
     "aria-label": t("Nombre de la red"),
     oninput: markDirty,
   });
   const save = async () => {
+    if (saveButton.disabled) return;
+    persist();
+    const submittedDraft = JSON.stringify(readDraft(draftKey));
+    saveButton.disabled = true;
+    form.inert = true;
+    feedback.textContent = t("Guardando…");
+    feedback.dataset.state = "saving";
+    const options = { quiet: true, onError: (error) => {
+      feedback.textContent = error.message;
+      feedback.dataset.state = "error";
+      if (error.status === 409 && editing) {
+        const current = liveState.networks.find((n) => n.id === editing.id && n.created_at === editing.created_at);
+        conflict.hidden = false;
+        conflict.replaceChildren(el("p", {}, current ? t("En el servidor: {name} · {cidr}", { name: current.name, cidr: current.cidr }) : t("Esa red ya no existe. Sus IPs reclamadas se conservan.")),
+          current ? el("button", { type: "button", class: "btn", onclick: () => {
+            revision = current.revision; persist(); conflict.hidden = true;
+            feedback.textContent = t("Borrador listo. Revisa los campos y pulsa Guardar.");
+          } }, t("Conservar mi borrador sobre esta versión")) : null);
+      }
+    } };
     const ok = editing
-      ? await act("networks/rename", { id: editing.id, name: name.value }, t("Red guardada"))
-      : await act("networks/add", { cidr: cidr.value, name: name.value }, t("Red añadida"));
+      ? await act("networks/update", { id: editing.id, created_at: editing.created_at, revision, cidr: cidr.value, name: name.value }, t("Red guardada"), options)
+      : await act("networks/add", { cidr: cidr.value, name: name.value }, t("Red añadida"), options);
+    saveButton.disabled = false;
+    form.inert = false;
     if (ok) {
+      if (JSON.stringify(readDraft(draftKey)) === submittedDraft) clearDraft(draftKey);
+      if (!form.isConnected) { render({ soft: true }); return; }
+      if (editing) {
+        ui.net = liveState.networks.find((n) => n.id === editing.id)?.cidr || null;
+        ui.sel.clear();
+      }
       if (!editing) {
         const base = cidr.value.trim().split("/")[0];
         const added = liveState.networks.find((n) => /^\d{1,3}(\.\d{1,3}){3}$/.test(base) && inNetwork(n.cidr, base));
@@ -258,16 +263,17 @@ function networkForm(state, { firstRun = false } = {}) {
   const onEnter = (e) => e.key === "Enter" && save();
   cidr.addEventListener("keydown", onEnter);
   name.addEventListener("keydown", onEnter);
+  const saveButton = el("button", { type: "button", class: "btn primary", onclick: save }, editing ? t("Guardar") : t("Añadir red"));
   const form = el(
     "div",
     { class: "net-form", id: "net-form" },
     el("div", { class: "form-title" }, editing ? t("Editar red {cidr}", { cidr: editing.cidr }) : t("Añadir una red")),
-    el("div", { class: "row" }, cidr, name),
-    editing ? null : suggestionChips(cidr, name),
+    el("div", { class: "row" },
+      el("label", { class: "field" }, t("Red (CIDR)"), cidr), el("label", { class: "field" }, t("Nombre de la red"), name)),
     el(
       "div",
       { class: "row" },
-      el("button", { type: "button", class: "btn primary", onclick: save }, editing ? t("Guardar") : t("Añadir red")),
+      saveButton,
       firstRun
         ? null
         : el(
@@ -276,6 +282,7 @@ function networkForm(state, { firstRun = false } = {}) {
               type: "button",
               class: "btn ghost",
               onclick: () => {
+                clearDraft(draftKey);
                 ui.addingNet = false;
                 ui.editNet = null;
                 render();
@@ -284,20 +291,32 @@ function networkForm(state, { firstRun = false } = {}) {
             t("Cancelar"),
           ),
       editing ? el("span", { class: "spacer" }) : null,
-      editing ? removeNetworkButton(state, editing) : null,
+      editing ? removeNetworkButton(state, editing, draftKey) : null,
     ),
-    editing ? null : el("div", { class: "hint" }, t("De /22 a /30. No puede solaparse con otra red.")),
+    el("div", { class: "hint" }, editing ? t("Cambiar o quitar la red conserva tus IPs, equipos y notas. Las IPs fuera del segmento aparecen en Otras.") : t("De /22 a /30. No puede solaparse con otra red.")),
+    feedback, conflict,
+    editing ? null : suggestionChips(cidr, name),
   );
+  const persist = () => {
+    form.setAttribute("data-dirty", "");
+    const stored = saveDraft(draftKey, { cidr: cidr.value, name: name.value, revision });
+    feedback.textContent = stored ? t("Borrador guardado en esta pestaña") : t("Borrador pendiente; no cierres esta pestaña.");
+    feedback.dataset.state = "draft";
+  };
+  form.addEventListener("input", persist);
+  if (draft) form.setAttribute("data-dirty", "");
   if (!editing) setTimeout(() => cidr.isConnected && !cidr.value && cidr.focus(), 0);
   return form;
 }
 
-function removeNetworkButton(state, network) {
+function removeNetworkButton(state, network, draftKey) {
   const claimed = state.ips.filter((ip) => inNetwork(network.cidr, ip.address)).length;
   const remove = () =>
-    act("networks/remove", { id: network.id }, claimed ? t("Red quitada · sus IPs siguen en «Otras»") : t("Red quitada")).then(
+    act("networks/remove", { id: network.id, created_at: network.created_at, revision: network.revision }, claimed ? t("Red quitada · sus IPs siguen en «Otras»") : t("Red quitada")).then(
       (ok) => {
         if (ok) {
+          clearDraft(draftKey);
+          ui.sel.clear();
           ui.editNet = null;
           ui.net = null;
           render();
@@ -319,6 +338,7 @@ function suggestionChips(cidr, name) {
     for (const s of list) {
       // Interfaces muy grandes (p. ej. /16): proponer la /24 que contiene al servidor.
       const prefix = Number(s.cidr.split("/")[1]);
+      if (prefix > 30) continue;
       const cidrText = prefix < 22 ? s.address.split(".").slice(0, 3).join(".") + ".0/24" : s.cidr;
       if (!nets.has(cidrText)) nets.set(cidrText, s.interface);
     }
@@ -334,7 +354,7 @@ function suggestionChips(cidr, name) {
             title: iface,
             onclick: () => {
               cidr.value = c;
-              cidr.setAttribute("data-dirty", "");
+              cidr.dispatchEvent(new Event("input", { bubbles: true }));
               name.focus();
             },
           },
@@ -342,7 +362,7 @@ function suggestionChips(cidr, name) {
         ),
       );
     }
-  });
+  }).catch(() => { /* Suggestions are optional; manual network entry remains available. */ });
   return box;
 }
 
@@ -372,7 +392,7 @@ function summary(state) {
   box.append(
     el(
       "div",
-      { class: "occ-bar", role: "img", "aria-label": t("{a} asignadas, {b} reservadas, {c} ocupadas, {d} libres", { a: c.use, b: c.res, c: c.occ, d: c.free }) },
+      { class: "occ-bar", role: "img", "aria-label": t("{a} asignadas, {b} reservadas, {c} ocupadas, {d} sin actividad confirmada", { a: c.use, b: c.res, c: c.occ, d: c.free }) },
       ["use", "res", "occ", "free"].map((key) => el("i", { class: key + (ui.filter && ui.filter !== key ? " dim" : ""), style: { width: `${(c[key] / total) * 100}%` } })),
     ),
   );
@@ -408,7 +428,7 @@ function outsideSummary(state) {
   return el(
     "div",
     { class: "sum", id: "sum" },
-    el("p", { class: "muted" }, t("IPs tuyas que no pertenecen a ninguna red registrada. Puedes asignarlas o liberarlas igual que en el mapa.")),
+    el("p", { class: "muted" }, t("IPs tuyas fuera de las redes registradas. Puedes asignarlas, dejarlas disponibles o dejar de reclamarlas.")),
     scanInfo(state),
   );
 }
@@ -469,6 +489,7 @@ function scanInfo(state) {
       ),
     );
   }
+  if (scan.done) box.append(el("span", { class: "scan-counts" }, t("{ok} comprobadas · {failed} fallidas", { ok: scan.checked ?? scan.done, failed: scan.failed || 0 })));
   box.append(scanCycle(state));
   return box;
 }
@@ -476,12 +497,11 @@ function scanInfo(state) {
 function bannerSlot(state) {
   const error = state.scan.error;
   const slot = el("div", { id: "banner-slot" });
-  if (!error || ui.dismissedError === error) return slot;
-  slot.append(el(
+  if (error && ui.dismissedError !== error) slot.append(el(
     "div",
     { class: "banner", role: "alert" },
-    el("b", {}, t("El ping no funciona: ")),
-    el("span", {}, error),
+    el("b", {}, t("Escaneo incompleto: ")),
+    el("span", {}, t(error)),
     el("span", { class: "muted" }, " ", t("El inventario sigue funcionando sin datos de ping.")),
     el(
       "button",
@@ -497,6 +517,23 @@ function bannerSlot(state) {
       "×",
     ),
   ));
+  const addresses = ui.net === "outside" ? outsideIps(state).map((ip) => ip.address) : networkHosts(ui.net).filter((a) => !isEdge(ui.net, a));
+  const warnings = addresses.flatMap((address) => {
+    const info = pingInfo(state, address);
+    const ip = ipRecord(state, address);
+    if (info.status === "failed") return [{ address, reason: t("Comprobación fallida"), detail: t(info.error) }];
+    if (ip && ip.device_id == null && info.up === true) return [{ address, reason: t("Reservada que responde"), detail: t("Responde al ping aunque no le has asignado equipo.") }];
+    return [];
+  });
+  if (warnings.length) {
+    const notices = el("details", { class: "review-notices", id: "review-notices", open: !!document.getElementById("review-notices")?.open },
+      el("summary", {}, t("Avisos de esta red ({n})", { n: warnings.length })),
+      el("div", { class: "notice-list" }, warnings.map(({ address, reason, detail }) => el("button", {
+        type: "button", class: "notice-row", title: detail, onclick: () => { ui.sel = new Set([address]); ui.anchor = address; render(); },
+      }, el("b", { class: "mono" }, address), " · ", reason))),
+    );
+    slot.append(notices);
+  }
   return slot;
 }
 
@@ -516,6 +553,8 @@ function cellClass(state, address, cidr) {
 function cellDot(state, address) {
   const status = ipStatus(state, address);
   const info = pingInfo(state, address);
+  if (info.status === "failed") return el("i", { class: "dot fault", title: pingLabel(info) });
+  if (info.status === "stale") return el("i", { class: "dot stale", title: pingLabel(info) });
   if (status === "use") {
     if (info.up === true) return el("i", { class: "dot up" });
     if (info.up === false) return el("i", { class: "dot down" });
@@ -528,9 +567,9 @@ function cellDot(state, address) {
 }
 
 function cellTitle(state, address, cidr) {
-  if (isEdge(cidr, address)) return address === networkHosts(cidr)[0] ? t("Dirección de red") : t("Broadcast");
+  if (cidr !== "outside" && isEdge(cidr, address)) return address === networkHosts(cidr)[0] ? t("Dirección de red") : t("Broadcast");
   const d = deviceOf(state, address);
-  return d ? `${address} · ${d.name}` : address;
+  return [address, d?.name, pingLabel(pingInfo(state, address))].filter(Boolean).join(" · ");
 }
 
 function grid(state) {
@@ -570,37 +609,53 @@ function grid(state) {
   return wrap;
 }
 
-function outsideList(state) {
-  const list = el("div", { class: "iplist", role: "list" });
-  for (const ip of outsideIps(state)) {
-    const status = ipStatus(state, ip.address);
-    const d = deviceOf(state, ip.address);
-    const fade = !matches(state, ip.address, ui.q);
-    list.append(
-      el(
-        "button",
-        {
-          type: "button",
-          class: "iprow" + (ui.sel.has(ip.address) ? " sel" : "") + (fade ? " fade" : ""),
-          "data-ip": ip.address,
-          role: "listitem",
-        },
-        el("span", { class: "mono" }, ip.address),
-        el("span", { class: `pill ${status}` }, status === "use" ? t("Asignada") : t("Reservada")),
-        el("span", { class: "iprow-dev" }, d ? d.name : ip.note || ""),
-        cellDot(state, ip.address),
-      ),
-    );
-  }
-  attachSelection(list, state, outsideIps(state).map((ip) => ip.address));
+function listRow(state, address) {
+  const ip = ipRecord(state, address), d = deviceOf(state, address), info = pingInfo(state, address);
+  const status = ipStatus(state, address);
+  const fade = (ui.filter && ui.filter !== status) || !matches(state, address, ui.q);
+  const row = el("button", { type: "button", class: "iprow" + (ui.sel.has(address) ? " sel" : "") + (fade ? " fade" : ""),
+    "data-ip": address, "aria-pressed": String(ui.sel.has(address)), title: cellTitle(state, address, ui.net) },
+    el("span", { class: "iprow-identity" }, el("b", { class: "iprow-dev" }, d?.name || t("Sin equipo asignado")), el("span", { class: "mono" }, address)),
+    el("span", { class: "pill " + (ip ? status : "unclaimed") }, ip ? status === "use" ? t("Asignada") : t("Reservada") : t("Sin reclamar")),
+    el("span", { class: "connectivity " + info.status }, cellDot(state, address), pingLabel(info)),
+    el("span", { class: "small muted" }, info.checkedAt ? agoText(minutesSince(info.checkedAt)) : "—"),
+  );
+  row.dataset.sig = JSON.stringify([row.textContent, info.error, info.status]);
+  return row;
+}
+
+function addressList(state) {
+  const addresses = ui.net === "outside" ? outsideIps(state).map((ip) => ip.address) : networkHosts(ui.net).filter((a) => !isEdge(ui.net, a));
+  const list = el("div", { class: "iplist", "aria-label": t("Direcciones de red") },
+    el("div", { class: "iplist-head", "aria-hidden": "true" },
+      el("span", {}, t("Equipo / IP")), el("span", {}, t("Mi inventario")), el("span", {}, t("Conectividad")), el("span", {}, t("Comprobada"))),
+    addresses.map((address) => listRow(state, address)),
+  );
+  attachSelection(list, state, addresses);
   return list;
+}
+
+function patchList(list, state) {
+  if (!list) return;
+  for (const row of list.querySelectorAll("[data-ip]")) {
+    const fresh = listRow(state, row.dataset.ip);
+    row.className = fresh.className;
+    row.title = fresh.title;
+    row.setAttribute("aria-pressed", fresh.getAttribute("aria-pressed"));
+    if (row.dataset.sig !== fresh.dataset.sig) {
+      row.replaceChildren(...fresh.childNodes);
+      row.dataset.sig = fresh.dataset.sig;
+    }
+  }
+  // Claims outside registered networks can appear or disappear after another tab changes them.
+  if (ui.net === "outside" && [...list.querySelectorAll("[data-ip]")].map((r) => r.dataset.ip).join() !== outsideIps(state).map((ip) => ip.address).join()) list.replaceWith(addressList(state));
 }
 
 function footer(state) {
   return el(
     "div",
     { class: "mapfoot" },
-    el("div", { class: "hover", id: "hover", "aria-live": "off" }, ui.net === "outside" ? "" : t("Pasa el ratón por una IP para ver detalles.")),
+    el("div", { class: "hover", id: "hover", "aria-live": "off" }, ui.net === "outside" || ui.mapMode === "list" ? "" : t("Pasa el ratón por una IP para ver detalles.")),
     ui.net === "outside"
       ? null
       : el(
@@ -610,6 +665,8 @@ function footer(state) {
           el("span", {}, el("i", { class: "ld down" }), t("no responde")),
           el("span", {}, el("i", { class: "ld seen" }), t("respondió hace poco")),
           el("span", {}, el("i", { class: "sw free unk" }), t("sin datos de ping")),
+          el("span", {}, el("i", { class: "dot fault" }), t("Comprobación fallida")),
+          el("span", {}, el("i", { class: "dot stale" }), t("Datos antiguos")),
           el("span", { class: "legend-tip" }, t("Shift+clic o arrastra para elegir varias")),
         ),
   );
@@ -624,8 +681,7 @@ function hoverText(state, address) {
   if (status === "use") parts.push(d.name);
   else if (status === "res") parts.push(t("reservada") + (ip.note ? ` — ${ip.note}` : ""));
   else if (status === "occ") parts.push(t("responde, alguien la usa"));
-  else if (info.recent) parts.push(t("libre · respondió {ago}", { ago: agoText(info.lastUpAgoMin) }));
-  else parts.push(info.up === null ? t("libre · sin datos de ping") : t("libre"));
+  else parts.push(t("Sin reclamar"), pingLabel(info));
   return parts.join(" · ");
 }
 
@@ -669,7 +725,7 @@ function attachSelection(container, state, selectable) {
   container.addEventListener("pointerover", (e) => {
     const cell = e.target.closest("[data-ip]");
     if (!cell) return;
-    if (ui.net !== "outside") document.getElementById("hover").textContent = hoverText(state, cell.dataset.ip);
+    if (ui.net !== "outside") document.getElementById("hover").textContent = hoverText(liveState, cell.dataset.ip);
     if (!drag || cell.disabled || !(e.buttons & 1) || (cell.dataset.ip === drag.start && !drag.moved)) return;
     drag.moved = true;
     ui.sel = new Set([...drag.base, ...range(drag.start, cell.dataset.ip)]);
@@ -699,7 +755,7 @@ function attachSelection(container, state, selectable) {
     const cell = e.target.closest("[data-ip]");
     if (!cell || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
     const cells = [...container.querySelectorAll("[data-ip]")];
-    const columns = ui.net === "outside" ? 1 : 16;
+    const columns = container.classList.contains("iplist") ? 1 : 16;
     const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns }[e.key];
     const next = cells[cells.indexOf(cell) + step];
     if (next) {

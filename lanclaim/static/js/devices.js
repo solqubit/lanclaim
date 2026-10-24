@@ -4,6 +4,7 @@ import { act, goto, isBusy, markDirty, render, state as liveState, ui } from "./
 import { deviceIcon, osIcon } from "./icons.js";
 import { byIp, device as deviceById, deviceIps, deviceOf, deviceTree, effectivePlatform, labelUsage, machineForPlatform, machines, networkOf, pingInfo, platformLabels } from "./model.js";
 import { osSelect } from "./ossel.js";
+import { clearDraft, readDraft, saveDraft } from "./drafts.js";
 import { confirmButton, el, toast } from "./ui.js";
 
 const TYPES = ["vm", "fisica", "contenedor", "otro"];
@@ -208,26 +209,33 @@ function field(label, ...children) {
 }
 
 function deviceForm(state, d) {
-  const addresses = d ? deviceIps(state, d.id) : ui.newDevAddress ? [ui.newDevAddress] : [];
+  const draftKey = d ? `device:${d.id}:${d.created_at}` : `device:new:${ui.newDevAddress || ""}`;
+  const draft = readDraft(draftKey);
+  const values = draft?.fields || d;
+  let revision = draft?.revision ?? d?.revision;
+  let persistDraft = () => {};
+  const feedback = el("p", { class: "save-state", role: "status" }, draft ? t("Borrador restaurado") : "");
+  const conflict = el("div", { class: "conflict-box", hidden: true });
+  const addresses = draft?.addresses ? [...draft.addresses] : d ? deviceIps(state, d.id) : ui.newDevAddress ? [ui.newDevAddress] : [];
   // Lo que había al abrir: al guardar se envían solo altas y bajas, para no deshacer cambios de otra pestaña.
-  const original = d ? [...addresses] : [];
-  const name = el("input", { class: "in", value: d ? d.name : "", maxlength: 120, placeholder: t("Nombre, p. ej. glpi"), "aria-label": t("Nombre"), oninput: markDirty });
+  const original = draft?.original || (d ? [...addresses] : []);
+  const name = el("input", { class: "in", value: values?.name || "", maxlength: 120, placeholder: t("Nombre, p. ej. glpi"), "aria-label": t("Nombre"), oninput: markDirty });
   const type = el(
     "select",
     { class: "in", "aria-label": t("Tipo"), onchange: markDirty },
-    TYPES.map((k) => el("option", { value: k, selected: d ? d.type === k : k === "vm" }, typeLabel(k))),
+    TYPES.map((k) => el("option", { value: k, selected: values ? values.type === k : k === "vm" }, typeLabel(k))),
   );
   // Sistema operativo: de la biblioteca, con la versión aparte.
-  const osSel = osSelect(d ? d.os : "", { onDirty: () => osSel.node.setAttribute("data-dirty", "") });
-  const note = el("textarea", { class: "in", rows: 2, maxlength: 2000, value: d ? d.note : "", placeholder: t("Nota"), "aria-label": t("Nota"), oninput: markDirty });
+  const osSel = osSelect(values?.os || "", { onDirty: () => { osSel.node.setAttribute("data-dirty", ""); persistDraft(); } });
+  const note = el("textarea", { class: "in", rows: 2, maxlength: 2000, value: values?.note || "", placeholder: t("Nota"), "aria-label": t("Nota"), oninput: markDirty });
 
   // Plataforma de virtualización: para una VM, dónde se virtualiza; para una máquina física, qué ejecuta.
   const deviceId = d ? d.id : null;
-  const platform = el("input", { class: "in", maxlength: 60, autocomplete: "off", value: d ? d.platform : "", placeholder: t("p. ej. Vates XCP-ng, VMware Workstation Pro"), "aria-label": t("Plataforma de virtualización"), oninput: markDirty });
+  const platform = el("input", { class: "in", maxlength: 60, autocomplete: "off", value: values?.platform || "", placeholder: t("p. ej. Vates XCP-ng, VMware Workstation Pro"), "aria-label": t("Plataforma de virtualización"), oninput: markDirty });
   // Máquina física (opcional): una existente o un nombre nuevo, que se crea al guardar.
   const machineList = machines(state).filter((m) => m.id !== deviceId);
   const currentMachine = d && d.host_id != null ? deviceById(state, d.host_id) : null;
-  const machine = el("input", { class: "in", list: "machine-list", autocomplete: "off", maxlength: 120, value: currentMachine ? currentMachine.name : "", placeholder: t("Opcional, p. ej. Cubito o Mi PC"), "aria-label": t("Máquina física"), oninput: markDirty });
+  const machine = el("input", { class: "in", list: "machine-list", autocomplete: "off", maxlength: 120, value: draft?.machine ?? currentMachine?.name ?? "", placeholder: t("Opcional, p. ej. Cubito o Mi PC"), "aria-label": t("Máquina física"), oninput: markDirty });
   const machineOptions = el("datalist", { id: "machine-list" }, machineList.map((m) => el("option", { value: m.name }, m.platform)));
   const machineHint = el("div", { class: "hint" });
   const findMachine = () => machineList.find((m) => m.name.toLowerCase() === machine.value.trim().toLowerCase());
@@ -277,7 +285,7 @@ function deviceForm(state, d) {
   };
   type.addEventListener("change", syncType);
 
-  const dhcp = el("input", { type: "checkbox", checked: !!(d && d.dhcp), onchange: (e) => (markDirty(e), syncDhcp()) });
+  const dhcp = el("input", { type: "checkbox", checked: !!values?.dhcp, onchange: (e) => (markDirty(e), syncDhcp()) });
   const dhcpWarn = el("p", { class: "warn", hidden: true });
   const ipSection = el("div", {});
   const syncDhcp = () => {
@@ -312,6 +320,7 @@ function deviceForm(state, d) {
                     addresses.splice(addresses.indexOf(a), 1);
                     chips.setAttribute("data-dirty", "");
                     paintIps();
+                    persistDraft();
                   },
                 },
                 "×",
@@ -328,7 +337,7 @@ function deviceForm(state, d) {
   picker.addEventListener("change", () => {
     if (picker.value) addIps([picker.value]);
   });
-  const typed = el("input", { class: "in mono", placeholder: t("o escribe una IP o rango"), "aria-label": t("Escribir IP o rango") });
+  const typed = el("input", { class: "in mono", value: draft?.typed || "", placeholder: t("o escribe una IP o rango"), "aria-label": t("Escribir IP o rango") });
   // Devuelve false si el texto no es válido, para que Guardar no siga sin esa IP.
   const addTyped = () => {
     const text = typed.value.trim();
@@ -355,9 +364,11 @@ function deviceForm(state, d) {
     addresses.sort((x, y) => (/^[\d.]+$/.test(x) && /^[\d.]+$/.test(y) ? byIp(x, y) : x.localeCompare(y)));
     chips.setAttribute("data-dirty", "");
     paintIps();
+    persistDraft();
   };
 
   const save = async () => {
+    if (saveButton.disabled) return;
     if (!name.value.trim()) {
       toast(t("El nombre es obligatorio."), "error");
       name.focus();
@@ -376,13 +387,39 @@ function deviceForm(state, d) {
     const add = addresses.filter((a) => !original.includes(a));
     const remove = original.filter((a) => !addresses.includes(a));
     const savedName = name.value.trim();
+    persistDraft();
+    const submittedDraft = JSON.stringify(readDraft(draftKey));
+    saveButton.disabled = true;
+    form.inert = true;
+    feedback.textContent = t("Guardando…");
+    feedback.dataset.state = "saving";
+    const options = { quiet: true, onError: (error) => {
+      feedback.textContent = error.message;
+      feedback.dataset.state = "error";
+      if (error.status === 409 && d) {
+        const current = deviceById(liveState, d.id);
+        conflict.hidden = false;
+        conflict.replaceChildren(el("h3", {}, t("Versión actual en el servidor")),
+          el("p", {}, current ? [current.name, typeLabel(current.type), current.os, effectivePlatform(liveState, current).name,
+            current.dhcp ? "DHCP" : deviceIps(liveState, current.id).join(", "), current.note].filter(Boolean).join(" · ") : t("Ese equipo ya no existe.")),
+          current ? el("button", { type: "button", class: "btn", onclick: () => {
+            revision = current.revision; persistDraft(); conflict.hidden = true;
+            feedback.textContent = t("Borrador listo. Revisa los campos y pulsa Guardar.");
+          } }, t("Conservar mi borrador sobre esta versión")) : null);
+      }
+    } };
     const ok = d
-      ? await act("devices/update", { id: d.id, created_at: d.created_at, ...body, add, remove }, t("{name} guardado", { name: savedName }))
-      : await act("devices/create", { ...body, addresses }, t("{name} creado", { name: savedName }));
+      ? await act("devices/update", { id: d.id, created_at: d.created_at, revision, ...body, add, remove }, t("{name} guardado", { name: savedName }), options)
+      : await act("devices/create", { ...body, addresses }, t("{name} creado", { name: savedName }), options);
+    form.inert = false;
+    saveButton.disabled = false;
     if (ok) {
+      if (JSON.stringify(readDraft(draftKey)) === submittedDraft) clearDraft(draftKey);
       const saved = d || liveState.devices.find((x) => x.name.toLowerCase() === savedName.toLowerCase());
-      closePanel();
-      if (saved) flashDevice(saved.id);
+      if (form.isConnected && ui.view === "equipos" && ui.editDev === (d?.id ?? "new")) {
+        closePanel();
+        if (saved) flashDevice(saved.id);
+      }
     }
   };
   name.addEventListener("keydown", (e) => e.key === "Enter" && save());
@@ -397,15 +434,16 @@ function deviceForm(state, d) {
         sureLabel: deviceIps(state, d.id).length ? t("¿Eliminar? Sus {n} IPs quedan reservadas", { n: deviceIps(state, d.id).length }) : t("¿Eliminar?"),
         onConfirm: () => {
           const n = deviceIps(state, d.id).length;
-          act("devices/delete", { id: d.id, created_at: d.created_at }, n ? t("{name} eliminado · sus IPs quedan reservadas", { name: d.name }) : t("{name} eliminado", { name: d.name })).then(
-            (ok) => ok && closePanel(),
+          act("devices/delete", { id: d.id, created_at: d.created_at, revision }, n ? t("{name} eliminado · sus IPs quedan reservadas", { name: d.name }) : t("{name} eliminado", { name: d.name })).then(
+            (ok) => { if (ok) { clearDraft(draftKey); closePanel(); } },
           );
         },
         className: "btn danger",
       })
     : null;
 
-  return el(
+  const saveButton = el("button", { type: "button", class: "btn primary", onclick: save }, d ? t("Guardar") : t("Crear equipo"));
+  const form = el(
     "div",
     { class: "dev-form" },
     el("h2", { class: "form-title" }, d ? t("Editar {name}", { name: d.name }) : t("Nuevo equipo")),
@@ -427,12 +465,24 @@ function deviceForm(state, d) {
     el(
       "div",
       { class: "row" },
-      el("button", { type: "button", class: "btn primary", onclick: save }, d ? t("Guardar") : t("Crear equipo")),
-      el("button", { type: "button", class: "btn ghost", onclick: closePanel }, t("Cancelar")),
+      saveButton,
+      el("button", { type: "button", class: "btn ghost", onclick: () => { clearDraft(draftKey); closePanel(); } }, t("Descartar borrador")),
       remove ? el("span", { class: "spacer" }) : null,
       remove,
     ),
+    feedback, conflict,
   );
+  persistDraft = () => {
+    form.setAttribute("data-dirty", "");
+    const stored = saveDraft(draftKey, { revision, original, addresses: [...addresses], machine: machine.value, typed: typed.value,
+      fields: { name: name.value, type: type.value, os: osSel.read(), note: note.value, platform: platform.value, dhcp: dhcp.checked } });
+    feedback.textContent = stored ? t("Borrador guardado en esta pestaña") : t("Borrador pendiente; no cierres esta pestaña.");
+    feedback.dataset.state = "draft";
+  };
+  form.addEventListener("input", persistDraft);
+  form.addEventListener("change", persistDraft);
+  if (draft) form.setAttribute("data-dirty", "");
+  return form;
 }
 
 // ---------- Etiquetas: renombrar en todos los equipos o eliminar las que nadie usa ----------

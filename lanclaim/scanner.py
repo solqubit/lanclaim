@@ -80,7 +80,8 @@ class Scanner:
         self.wake = threading.Event()  # despierta el bucle cuando cambia el ciclo
         self.loop = None
         self.worker = None
-        self.job = {'running': False, 'total': 0, 'done': 0, 'finished_at': None, 'error': ''}
+        self.job = {'running': False, 'total': 0, 'done': 0, 'checked': 0, 'failed': 0,
+                    'responding': 0, 'no_response': 0, 'finished_at': None, 'error': ''}
         self.again = False  # alguien pidió escanear mientras otro ciclo estaba en curso
 
     def status(self):
@@ -122,7 +123,7 @@ class Scanner:
                 thread.join(timeout=6)
 
     def _begin(self):
-        self.job.update(running=True, total=0, done=0)
+        self.job.update(running=True, total=0, done=0, checked=0, failed=0, responding=0, no_response=0, error='')
 
     def _seconds_since_last(self):
         finished = self.job['finished_at']
@@ -170,6 +171,7 @@ class Scanner:
 
             def work():
                 batch = {}
+                errors = {}
                 while not failed.is_set() and not self.stopping.is_set():
                     with pending_lock:
                         address = next(pending, None)
@@ -177,18 +179,28 @@ class Scanner:
                         break
                     try:
                         batch[address] = self.probe(address) == 'responding'
-                    except PingUnavailable:
-                        raise
                     except Invalid as exc:
-                        # Fallo de una sola dirección (sin ruta, broadcast…): sin observación, el ciclo sigue.
-                        skipped.append((address, str(exc)))
+                        errors[address] = str(exc)
+                        with self.lock:
+                            skipped.append((address, str(exc)))
+                        if isinstance(exc, PingUnavailable):
+                            failed.set()
                     with self.lock:
                         self.job['done'] += 1
-                    if len(batch) >= BATCH:
+                        if address in errors:
+                            self.job['failed'] += 1
+                        else:
+                            self.job['checked'] += 1
+                            self.job['responding' if batch[address] else 'no_response'] += 1
+                    if len(batch) + len(errors) >= BATCH:
                         self._save(batch)
+                        self.store.record_probe_errors(errors, now())
                         batch = {}
+                        errors = {}
                 if batch:
                     self._save(batch)
+                if errors:
+                    self.store.record_probe_errors(errors, now())
 
             def guarded():
                 try:
@@ -209,7 +221,8 @@ class Scanner:
             error = GENERIC_ERROR
             log.error('Escaneo fallido: %s', type(exc).__name__, exc_info=exc)
         if skipped:
-            log.info('%d direcciones sin resultado de ping (p. ej. %s: %s)', len(skipped), *skipped[0])
+            error = error or skipped[0][1]
+            log.warning('%d direcciones sin resultado de ping (p. ej. %s: %s)', len(skipped), *skipped[0])
         with self.lock:
             if error and error != self.job['error']:
                 log.warning('%s', error)

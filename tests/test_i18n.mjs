@@ -15,6 +15,11 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) {
 assert.ok(keys.size > 100, `expected many translated strings, found ${keys.size}`);
 const missing = [...keys].filter((k) => !(typeof EN[k] === "string" && EN[k].trim()));
 assert.deepEqual(missing, [], "missing English translations");
+const scanner = fs.readFileSync("lanclaim/scanner.py", "utf8");
+for (const match of scanner.matchAll(/^[A-Z_]+ = '([^']+)'/gm)) {
+  assert.ok(EN[match[1]], `scanner message missing English translation: ${match[1]}`);
+}
+assert.ok(EN["No se pudo ejecutar ping. Revisa los permisos y la red del servidor."]);
 
 setLang("en");
 assert.equal(t("hace {n} min", { n: 5 }), "5 min ago");

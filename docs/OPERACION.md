@@ -90,11 +90,10 @@ Si la recuperación automática no logra arrancar el servicio:
 
 ## Uso
 
-- **Red:** cada red registrada se ve como una cuadrícula.
-  - **＋ Red** añade otra red y sugiere las del servidor. Con **⋯** se renombra o se quita.
+- **Red:** cada red registrada ofrece **Mapa / Lista**, con la misma selección y panel de administración.
+  - **＋ Red** añade otra red y sugiere las del servidor. Con **Administrar red** se cambia el nombre, el CIDR o se quita el segmento, conservando el inventario.
   - Al hacer clic en una IP, el panel lateral permite reclamarla (queda reservada), asignarla a un equipo (si el nombre no existe, se crea), cambiar o quitar el equipo, escribir una nota (se guarda sola) o liberarla.
   - Shift+clic o arrastrar selecciona varias.
-  - **Necesito una IP** propone tu primera reservada o, si no hay, la primera libre que no ha respondido en 7 días.
 - **Otras:** IPs tuyas fuera de cualquier red registrada, por ejemplo tras quitar una red.
 - **Equipos:** las VMs y contenedores aparecen debajo de su máquina física; los que no tienen máquina se agrupan por plataforma. Crear y editar abren el panel lateral sin mover la lista.
   - **Sistema operativo:** se elige de la biblioteca de iconos y se escribe solo la versión (en «Otro Linux» y «Otro sistema», también el nombre).
@@ -120,3 +119,11 @@ El servicio recibe únicamente `CAP_NET_RAW` mediante `AmbientCapabilities` y `C
 Si ping falla (permisos, falta de ruta, binario ausente), la interfaz muestra un aviso con la causa y el inventario sigue funcionando. Los detalles quedan en `sudo journalctl -u lanclaim -n 100 --no-pager`.
 
 Las comprobaciones salen del servidor, no del navegador. En VM o WSL2 la red virtual puede ser distinta de la LAN física: registra una red alcanzable desde ese servidor.
+
+## Borradores y comprobaciones
+
+Los borradores se guardan en sessionStorage de la pestaña y sobreviven a navegar y recargar. Descartar borrador elimina solo esos cambios locales. Si el almacenamiento del navegador no está disponible, se mantiene una copia en memoria y se avisa antes de abandonar. Cerrar definitivamente la sesión de la pestaña puede eliminar sus borradores.
+
+Las ediciones concurrentes de equipos, redes y notas responden 409. El panel muestra la versión del servidor para que se revise antes de guardar el borrador sobre ella. Se indican guardados pendientes, en curso o fallidos y se pueden reintentar las notas.
+
+El aviso de desconexión mantiene visibles los últimos datos e indica su antigüedad. Los avisos de red reúnen reservadas que responden y comprobaciones fallidas, sin afirmar que ping detecte IPs duplicadas.

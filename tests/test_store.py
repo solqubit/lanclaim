@@ -185,15 +185,20 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.state(), before)
 
     def test_v10_migration_keeps_data_and_seeds_identity_counter(self):
-        self.store.create_device({'name': 'Existing host', 'type': 'fisica', 'platform': 'KVM'})
-        self.store.create_device({'name': 'Existing guest', 'type': 'vm', 'host': {'id': 1}}, ['192.0.2.10'])
-        before = self.store.state()
-        with self.store.transaction() as db:
-            db.execute('DROP TABLE identity_counters')
-            db.execute('PRAGMA user_version=10')
-        self.store = Store(self.path)
-        self.assertEqual(self.store.state(), before)
-        self.assertGreater(self.store.create_device({'name': 'New', 'type': 'vm'}), 2)
+        from lanclaim.db import MIGRATIONS
+        legacy = Path(self.temp.name) / 'v10.sqlite3'
+        db = sqlite3.connect(legacy)
+        db.executescript(V5_SCHEMA + ''.join(MIGRATIONS[v] for v in range(6, 11)) + """
+          INSERT INTO devices(id,name,name_key,type,os,note,created_at,platform) VALUES(9,'Existing','existing','vm','Debian','Keep','t','KVM');
+          INSERT INTO ips(address,sort_key,device_id,note,claimed_at) VALUES('192.0.2.10',3221225994,9,'IP note','t');
+          PRAGMA user_version=10;
+        """)
+        db.close()
+        self.store = Store(legacy)
+        self.assertEqual(self.device_named('Existing')['note'], 'Keep')
+        self.assertEqual(self.ip('192.0.2.10')['note'], 'IP note')
+        self.assertEqual(self.device_named('Existing')['revision'], 1)
+        self.assertGreater(self.store.create_device({'name': 'New', 'type': 'vm'}), 9)
         with self.store.connect() as db:
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
 
@@ -422,10 +427,11 @@ class StoreTests(unittest.TestCase):
         with self.assertRaises(Invalid):
             self.store.create_device({'name': 'x', 'type': 'vm'}, ['192.168.1.255'])
         self.assertEqual(self.store.state()['ips'], [])
-        # An edge claimed before its network was registered is never pinged.
+        # Registering a network must never hide an already claimed address.
         self.store.claim('10.0.0.0')
-        self.store.add_network('10.0.0.0/30')
-        self.assertNotIn('10.0.0.0', self.store.watched_addresses())
+        with self.assertRaises(Invalid):
+            self.store.add_network('10.0.0.0/30')
+        self.assertIsNotNone(self.ip('10.0.0.0'))
 
     def test_update_device_rejects_bad_address_atomically(self):
         did = self.store.create_device({'name': 'k3s', 'type': 'vm'}, ['192.168.1.10', '192.168.1.11'])
@@ -471,8 +477,8 @@ class StoreTests(unittest.TestCase):
         self.store.record_observations({'192.168.1.1': True, '192.168.1.2': True}, T1)
         self.store.record_observations({'192.168.1.1': False}, T2)
         obs = self.store.state()['observations']
-        self.assertEqual(obs['192.168.1.1'], {'up': False, 'checked_at': T2, 'last_up_at': T1})
-        self.assertEqual(obs['192.168.1.2'], {'up': True, 'checked_at': T1, 'last_up_at': T1})
+        self.assertEqual(obs['192.168.1.1'], {'up': False, 'checked_at': T2, 'last_up_at': T1, 'error': ''})
+        self.assertEqual(obs['192.168.1.2'], {'up': True, 'checked_at': T1, 'last_up_at': T1, 'error': ''})
         self.assertIsNone(self.ip('192.168.1.1')['device_id'])
         self.assertEqual(len(self.store.state()['ips']), 1)
 
