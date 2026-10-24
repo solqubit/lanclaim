@@ -35,3 +35,10 @@
 - El adaptador de servicio del contenedor no reproduce systemd completo. No se ha certificado una matriz de distribuciones ni de navegadores móviles.
 - Un firewall puede bloquear ICMP: el ping no detecta todos los equipos y una IP silenciosa no está garantizada como libre.
 - Los tests usan rangos y nombres de prueba, nunca datos reales de infraestructura.
+
+## Correcciones verificadas el 23 de octubre de 2026
+
+- 74 pruebas Python: Windows y Ubuntu en WSL2. Las regresiones nuevas comprueban respaldo de esquemas antiguos sin migrarlos, ejecución independiente de importaciones de la aplicación, inclusión del WAL, identidades no reutilizables y validación de identidad HTTP, migración 10→11 sin pérdida de filas y conservación de plataformas heredadas al borrar el host.
+- `test_autosave.mjs`: una nota fallida sigue pendiente y se reintenta sin editarla otra vez; no se duplican escrituras simultáneas ni se pierde el borrador más reciente; no hay bucle automático de reintentos ante errores.
+- Docker Ubuntu 24.04: ciclo de vida completo aprobado con ICMP normal y restringido. El respaldo de una base v10 sigue siendo v10, y una versión que cambia datos y sube a v12 antes de fallar recupera el esquema y los datos anteriores. Instalación, escaneo, actualización, recuperación, reinstalación, borrado de equipo y purga comprobados dentro del contenedor.
+- Pruebas Node de modelo/traducciones, sintaxis JavaScript/Bash y ShellCheck aprobados. Los casos destructivos usan únicamente inventarios desechables.

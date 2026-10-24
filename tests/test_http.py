@@ -84,7 +84,7 @@ class HttpTests(unittest.TestCase):
         device = next(d for d in state['devices'] if d['name'] == 'glpi')
         self.assertEqual(ip['device_id'], device['id'])
         self.assertIn('csrf', state)
-        code, state = self.post('/api/devices/update', {'id': device['id'], 'name': 'glpi', 'type': 'vm', 'os': 'Debian 12',
+        code, state = self.post('/api/devices/update', {'id': device['id'], 'created_at': device['created_at'], 'name': 'glpi', 'type': 'vm', 'os': 'Debian 12',
                                                         'note': '', 'add': ['192.168.50.11'], 'remove': []})
         self.assertEqual(code, 200)
         self.assertEqual(len([i for i in state['ips'] if i['device_id'] == device['id']]), 2)
@@ -93,7 +93,7 @@ class HttpTests(unittest.TestCase):
         code, state = self.post('/api/ips/unassign', {'addresses': ['192.168.50.11']})
         code, state = self.post('/api/ips/release', {'addresses': ['192.168.50.11']})
         self.assertNotIn('192.168.50.11', [i['address'] for i in state['ips']])
-        code, state = self.post('/api/devices/delete', {'id': device['id']})
+        code, state = self.post('/api/devices/delete', {'id': device['id'], 'created_at': device['created_at']})
         self.assertEqual((code, state['devices']), (200, []))
 
     def test_forget_os_route(self):
@@ -101,7 +101,8 @@ class HttpTests(unittest.TestCase):
         code, state = self.post('/api/os/forget', {'name': 'FreeBSD 14'})
         self.assertEqual(code, 200)
         self.assertNotIn('FreeBSD 14', state['os_choices'])
-        self.post('/api/devices/delete', {'id': next(d['id'] for d in state['devices'] if d['name'] == 'os-test')})
+        device = next(d for d in state['devices'] if d['name'] == 'os-test')
+        self.post('/api/devices/delete', {'id': device['id'], 'created_at': device['created_at']})
         code, state = self.post('/api/platforms/rename', {'name': 'KVM', 'new': 'KVM / libvirt'})
         self.assertIn('KVM / libvirt', state['platform_choices'])
         code, state = self.post('/api/os/rename', {'name': 'nada', 'new': 'Nada 2'})
@@ -121,6 +122,15 @@ class HttpTests(unittest.TestCase):
         code, _, body = self.request('/api/suggestions')
         self.assertEqual(code, 200)
         self.assertIsInstance(json.loads(body)['networks'], list)
+
+    def test_device_identity_is_required_for_update_and_delete(self):
+        code, state = self.post('/api/devices/create', {'name': 'identity-test', 'type': 'vm'})
+        self.assertEqual(code, 200)
+        device = next(d for d in state['devices'] if d['name'] == 'identity-test')
+        self.assertEqual(self.post('/api/devices/update', {'id': device['id'], 'name': 'Wrong device'})[0], 400)
+        self.assertEqual(self.post('/api/devices/delete', {'id': device['id'], 'created_at': 'stale'})[0], 400)
+        self.assertEqual(self.server.store.state()['devices'], state['devices'])
+        self.assertEqual(self.post('/api/devices/delete', {'id': device['id'], 'created_at': device['created_at']})[0], 200)
 
     def test_adding_network_scans_it_right_away(self):
         self.post('/api/networks/add', {'cidr': '172.22.0.0/30'})

@@ -377,7 +377,7 @@ function deviceForm(state, d) {
     const remove = original.filter((a) => !addresses.includes(a));
     const savedName = name.value.trim();
     const ok = d
-      ? await act("devices/update", { id: d.id, ...body, add, remove }, t("{name} guardado", { name: savedName }))
+      ? await act("devices/update", { id: d.id, created_at: d.created_at, ...body, add, remove }, t("{name} guardado", { name: savedName }))
       : await act("devices/create", { ...body, addresses }, t("{name} creado", { name: savedName }));
     if (ok) {
       const saved = d || liveState.devices.find((x) => x.name.toLowerCase() === savedName.toLowerCase());
@@ -397,7 +397,7 @@ function deviceForm(state, d) {
         sureLabel: deviceIps(state, d.id).length ? t("¿Eliminar? Sus {n} IPs quedan reservadas", { n: deviceIps(state, d.id).length }) : t("¿Eliminar?"),
         onConfirm: () => {
           const n = deviceIps(state, d.id).length;
-          act("devices/delete", { id: d.id }, n ? t("{name} eliminado · sus IPs quedan reservadas", { name: d.name }) : t("{name} eliminado", { name: d.name })).then(
+          act("devices/delete", { id: d.id, created_at: d.created_at }, n ? t("{name} eliminado · sus IPs quedan reservadas", { name: d.name }) : t("{name} eliminado", { name: d.name })).then(
             (ok) => ok && closePanel(),
           );
         },

@@ -59,6 +59,8 @@ sudo ./update.sh
 
 El script prepara una versión en `/opt/lanclaim/releases`, detiene el servicio, crea una copia SQLite consistente en `/var/lib/lanclaim/backups`, cambia el enlace `current`, inicia y comprueba el servicio. Si falla, restaura el código, la unidad y la base de datos anterior y comprueba la recuperación. Las versiones previas y copias se conservan. El script no realiza `git pull` por su cuenta ni decide la rama a desplegar.
 
+La copia se crea directamente con SQLite, con el origen en modo de solo lectura y sin importar el código de la aplicación. Conserva el esquema anterior aunque el código nuevo deba migrarlo o descartarlo; el modo manual `--backup` usa el mismo procedimiento y tampoco inicializa el inventario.
+
 Si el servidor arranca pero una operación falla, consulta `sudo journalctl -u lanclaim -n 100`. No borres la base ni reinstales con purga para solucionar un error de arranque.
 
 ## Copias y recuperación manual

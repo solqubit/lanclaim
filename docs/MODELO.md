@@ -1,6 +1,6 @@
 # Modelo de datos (versión 2)
 
-SQLite, esquema `user_version = 10`, en `lanclaim/db.py`. Al arrancar con una base de la 0.x (esquemas 1 a 4) se descartan todas sus tablas y se crea el esquema vacío: la versión 2 no conserva datos de la 0.x. Desde la v5 los datos se conservan: las migraciones se aplican en orden (v6 añade `os_choices`; v7, anfitrión y plataforma; v8 separa el anfitrión en plataforma de cada VM y máquina física, y elimina como máquinas los anfitriones que solo eran etiquetas; v9 añade la IP dinámica y hace que las VMs hereden la plataforma de su máquina; v10 añade `settings`).
+SQLite, esquema `user_version = 11`, en `lanclaim/db.py`. Al arrancar con una base de la 0.x (esquemas 1 a 4) se descartan todas sus tablas y se crea el esquema vacío: la versión 2 no conserva datos de la 0.x. Desde la v5 los datos se conservan: las migraciones se aplican en orden (v6 añade `os_choices`; v7, anfitrión y plataforma; v8 separa el anfitrión en plataforma de cada VM y máquina física, y elimina como máquinas los anfitriones que solo eran etiquetas; v9 añade la IP dinámica y hace que las VMs hereden la plataforma de su máquina; v10 añade `settings`; v11 añade `identity_counters` para que los identificadores de equipos no se reutilicen).
 
 ## Tablas
 
@@ -11,6 +11,7 @@ SQLite, esquema `user_version = 10`, en `lanclaim/db.py`. Al arrancar con una ba
 | `ips` | `id`, `address`, `device_id`, `note`, `claimed_at` | Una fila por IP reclamada. Si `device_id` es nulo, la IP está reservada. Al borrar el equipo, `device_id` pasa a nulo. |
 | `os_choices` | `name`, `name_key`, `used_at` | SO ya usados (texto completo, p. ej. «Ubuntu 24.04»), sin repetir mayúsculas/minúsculas. Se añaden al guardar un equipo y sobreviven aunque se borre. Se gestionan en Etiquetas (renombrar en todos los equipos, quitar los que nadie usa). En el formulario, el SO se elige de una biblioteca fija y se escribe la versión. |
 | `platform_choices` | `name`, `name_key`, `used_at` | Plataformas guardadas (de serie: Proxmox VE, VMware ESXi, Vates XCP-ng, Nutanix AHV, Hyper-V, KVM, Local host). En el formulario, × quita una de la lista solo si ningún equipo la usa. |
+| `identity_counters` | `name`, `value` | Contador transaccional de identificadores de equipos; se inicializa con el máximo existente y no baja al borrar equipos. |
 | `settings` | `key`, `value` | Ajustes elegidos desde la interfaz. Hoy, `scan_interval`: segundos del ping automático (0 = desactivado), que manda sobre `LANCLAIM_SCAN_INTERVAL`. |
 | `observations` | `address`, `up`, `checked_at`, `last_up_at` | Último ping de cada dirección vigilada. `last_up_at` guarda la última vez que respondió. |
 
@@ -44,3 +45,5 @@ No hay historial: lo que se borra, se borra.
 ## Direcciones vigiladas
 
 El ping automático recorre los hosts de todas las redes registradas (sin las direcciones de red ni de broadcast) y las IPs reclamadas fuera de ellas.
+
+Las peticiones HTTP de edición y eliminación incluyen `created_at` del equipo leído. El servidor valida esa identidad antes de cambiar datos; una pestaña anterior debe recargar si falta o no coincide. Al eliminar una máquina física, sus invitados conservan la plataforma efectiva como propia antes de perder `host_id`.

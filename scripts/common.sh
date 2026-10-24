@@ -65,7 +65,7 @@ prepare_release() {
   cp "$SOURCE_ROOT/scripts/common.sh" "$RELEASE/scripts/"
   chmod -R u=rwX,go=rX "$RELEASE"
   chmod 0755 "$RELEASE"/*.sh
-  PYTHONPATH="$RELEASE" /usr/bin/python3 -c 'import lanclaim.server; print("Código de LanClaim validado")'
+  (cd "$RELEASE" && /usr/bin/python3 -c 'import lanclaim.server; print("Código de LanClaim validado")')
 }
 switch_release() {
   local destination="$1"

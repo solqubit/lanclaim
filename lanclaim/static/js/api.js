@@ -45,7 +45,7 @@ export async function post(path, body = {}, retry = true) {
     await load();
     return post(path, body, false);
   }
-  if (!response.ok) throw new Error(data.error || t("La operación falló."));
+  if (!response.ok) throw new Error(data.error ? t(data.error) : t("La operación falló."));
   csrf = data.csrf || csrf;
   return data;
 }

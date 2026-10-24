@@ -98,6 +98,7 @@ Es una herramienta de un solo usuario sin autenticación, pensada para una red p
 python3 -m unittest discover -s tests -v
 node tests/test_model.mjs
 node tests/test_i18n.mjs
+node tests/test_autosave.mjs
 bash -n install.sh update.sh uninstall.sh scripts/common.sh
 
 # Entorno Linux de integración desechable; no cambia servicios del equipo:
